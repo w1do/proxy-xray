@@ -19,7 +19,41 @@ PUBLIC_KEY="${PUBLIC_KEY:-}"
 SHORT_ID="${SHORT_ID:-}"
 REALITY_SERVER_NAME="${REALITY_SERVER_NAME:-dl.google.com}"
 PROXY_PORT="${PROXY_PORT:-7890}"
-EXPECTED_EXIT_IP="${EXPECTED_EXIT_IP:-$SERVER_IP}"
+RU_SERVER_IP="${RU_SERVER_IP:-}"
+RU_UUID="${RU_UUID:-}"
+RU_PUBLIC_KEY="${RU_PUBLIC_KEY:-}"
+RU_SHORT_ID="${RU_SHORT_ID:-}"
+RU_REALITY_SERVER_NAME="${RU_REALITY_SERVER_NAME:-dl.google.com}"
+RU_BLOCK=""
+FINAL_TARGET="PROXY"
+DEFAULT_EXIT_IP="$SERVER_IP"
+if [ -n "$RU_SERVER_IP" ]; then
+  if [ -z "$RU_UUID" ] || [ -z "$RU_PUBLIC_KEY" ] || [ -z "$RU_SHORT_ID" ]; then
+    echo "RU_SERVER_IP is set: RU_UUID, RU_PUBLIC_KEY, RU_SHORT_ID are required."
+    exit 2
+  fi
+  FINAL_TARGET="RU"
+  DEFAULT_EXIT_IP="$RU_SERVER_IP"
+  RU_BLOCK="  - name: RU-NODE
+    type: vless
+    server: ${RU_SERVER_IP}
+    port: 443
+    uuid: ${RU_UUID}
+    encryption: \"\"
+    network: tcp
+    tls: true
+    skip-cert-verify: true
+    udp: true
+    flow: xtls-rprx-vision
+    packet-encoding: xudp
+    servername: ${RU_REALITY_SERVER_NAME}
+    client-fingerprint: chrome
+    reality-opts:
+      public-key: ${RU_PUBLIC_KEY}
+      short-id: ${RU_SHORT_ID}
+"
+fi
+EXPECTED_EXIT_IP="${EXPECTED_EXIT_IP:-$DEFAULT_EXIT_IP}"
 
 if [ -z "$SERVER_IP" ] || [ -z "$UUID" ] || [ -z "$PUBLIC_KEY" ] || [ -z "$SHORT_ID" ]; then
   echo "Missing settings in proxy.env."
@@ -147,12 +181,13 @@ proxies:
     reality-opts:
       public-key: ${PUBLIC_KEY}
       short-id: ${SHORT_ID}
-
+${RU_BLOCK}
 proxy-groups:
   - name: PROXY
     type: select
     proxies:
       - USA
+$( [ -n "$RU_SERVER_IP" ] && printf '  - name: RU\n    type: select\n    proxies:\n      - RU-NODE\n' )
 
 rules:
   - DOMAIN-SUFFIX,openai.com,PROXY
@@ -170,7 +205,7 @@ rules:
   - DOMAIN-SUFFIX,claudeusercontent.com,PROXY
   - DOMAIN-SUFFIX,console.anthropic.com,PROXY
   - GEOIP,PRIVATE,DIRECT,no-resolve
-  - MATCH,PROXY
+  - MATCH,${FINAL_TARGET}
 EOF
 
 if [ -f "$PID_FILE" ]; then
