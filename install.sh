@@ -19,6 +19,8 @@ PUBLIC_KEY="${PUBLIC_KEY:-}"
 SHORT_ID="${SHORT_ID:-}"
 REALITY_SERVER_NAME="${REALITY_SERVER_NAME:-dl.google.com}"
 PROXY_PORT="${PROXY_PORT:-7890}"
+# chrome sends a large post-quantum ClientHello that gets dropped on some networks
+CLIENT_FINGERPRINT="${CLIENT_FINGERPRINT:-firefox}"
 RU_SERVER_IP="${RU_SERVER_IP:-}"
 RU_UUID="${RU_UUID:-}"
 RU_PUBLIC_KEY="${RU_PUBLIC_KEY:-}"
@@ -47,7 +49,7 @@ if [ -n "$RU_SERVER_IP" ]; then
     flow: xtls-rprx-vision
     packet-encoding: xudp
     servername: ${RU_REALITY_SERVER_NAME}
-    client-fingerprint: chrome
+    client-fingerprint: ${CLIENT_FINGERPRINT}
     reality-opts:
       public-key: ${RU_PUBLIC_KEY}
       short-id: ${RU_SHORT_ID}
@@ -177,7 +179,7 @@ proxies:
     flow: xtls-rprx-vision
     packet-encoding: xudp
     servername: ${REALITY_SERVER_NAME}
-    client-fingerprint: chrome
+    client-fingerprint: ${CLIENT_FINGERPRINT}
     reality-opts:
       public-key: ${PUBLIC_KEY}
       short-id: ${SHORT_ID}

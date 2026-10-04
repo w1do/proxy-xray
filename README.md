@@ -115,6 +115,7 @@ curl -sI https://claude.ai >/dev/null
 - `SERVER_IP`, `UUID`, `PUBLIC_KEY`, `SHORT_ID` — обязательные параметры.
 - `REALITY_SERVER_NAME` — имя сервера TLS/Reality; по умолчанию `dl.google.com`.
 - `PROXY_PORT` — локальный порт прокси; по умолчанию `7890`.
+- `CLIENT_FINGERPRINT` — TLS-отпечаток клиента; по умолчанию `firefox` (`chrome` на некоторых сетях не проходит рукопожатие).
 - `EXPECTED_EXIT_IP` — ожидаемый внешний IP; по умолчанию равен `SERVER_IP`.
 - `RU_SERVER_IP`, `RU_UUID`, `RU_PUBLIC_KEY`, `RU_SHORT_ID`, `RU_REALITY_SERVER_NAME` — необязательный RU-сервер для остального трафика (см. «Схема: USA для AI-сервисов, RU для остального»).
 
