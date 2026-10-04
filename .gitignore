@@ -1,0 +1,7 @@
+.DS_Store
+*.log
+*.pid
+proxy.env
+proxy.env.local
+.idea/
+bin/.git/
