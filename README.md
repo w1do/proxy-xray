@@ -1,86 +1,104 @@
 # Mihomo USA Proxy Kit
 
-Keep the repository private if it contains proxy credentials. Anyone with access
-to `proxy.env` can use the proxy. The real `proxy.env` file is ignored by Git.
+## Для чего нужен этот проект
 
-## Files
+Этот набор устанавливает на ваш компьютер локальный прокси Mihomo и настраивает
+его для подключения к вашему серверу в США по VLESS/Reality. Приложения,
+поддерживающие переменные прокси, смогут отправлять запросы через этот сервер,
+поэтому сайты будут видеть внешний IP сервера. Mihomo также настраивает системный
+HTTP/HTTPS/SOCKS-прокси в macOS.
 
-- `install.sh` - one-command installer for macOS and Linux/WSL.
-- `proxy.env` - local USA proxy credentials and routing target (not committed).
-- `proxy.env.example` - template for creating your local `proxy.env`.
-- `bin/` - put the matching Mihomo `.gz` archives here to avoid downloading during install.
+По умолчанию правила направляют через прокси сервисы OpenAI/ChatGPT, Anthropic/Claude,
+JetBrains AI и Grazie; остальной внешний трафик также направляется через прокси.
+Запросы к частным локальным адресам идут напрямую. Это не VPN: скрипт не создаёт
+сетевой интерфейс и сам по себе не перенаправляет приложения, которые игнорируют
+системные настройки и переменные прокси.
 
-## Recommended archives
+Чтобы подключиться, уже должен быть настроен сервер VLESS/Reality. Нужны его IP,
+UUID, публичный ключ Reality и Short ID. Скрипт устанавливает Mihomo, создаёт его
+конфигурацию, запускает прокси на `127.0.0.1:7890` и проверяет подключение по
+внешнему IP.
 
-- Linux/WSL x64: `bin/mihomo-linux-amd64-compatible-v1.19.32.gz`
-- macOS Apple Silicon: `bin/mihomo-darwin-arm64-v1.19.32.gz`
-- macOS Intel: `bin/mihomo-darwin-amd64-compatible-v1.19.32.gz`
+Храните `proxy.env` и репозиторий с учётными данными в безопасности: имея эти
+параметры, другой человек сможет использовать ваш прокси. Файл `proxy.env`
+исключён из Git.
 
-## Quick start (one command)
+## Файлы проекта
 
-Prerequisites: `git`, `curl`, `bash` (macOS or Linux/WSL). Mihomo is bundled
-for Linux x64; on other platforms it is downloaded from GitHub automatically.
+- `install.sh` — установка и запуск прокси в macOS, Linux и WSL.
+- `proxy.env.example` — шаблон настроек; скопируйте его в `proxy.env`.
+- `proxy.env` — локальные параметры подключения к серверу, не публикуйте этот файл.
+- `bin/` — архивы Mihomo; подходящий архив позволяет установить программу без загрузки.
 
-You need the proxy credentials from your server: `SERVER_IP`, `UUID`,
-`PUBLIC_KEY`, `SHORT_ID`.
+## Установка
+
+Понадобятся `git`, `curl`, `bash` и параметры VLESS/Reality сервера: `SERVER_IP`,
+`UUID`, `PUBLIC_KEY`, `SHORT_ID`. Для Linux x64 архив Mihomo включён в проект;
+на других поддерживаемых платформах установщик загружает подходящий архив с GitHub.
+
+Скопируйте команду целиком. При первом запуске редактор откроет файл настроек:
+впишите значения, сохраните файл и закройте редактор, чтобы установка продолжилась.
 
 ```bash
 git clone git@github.com:w1do/proxy-xray.git mihomo-proxy-kit && cd mihomo-proxy-kit && cp proxy.env.example proxy.env && nano proxy.env && bash ./install.sh
 ```
 
-Or step by step:
+Если SSH-доступ к GitHub не настроен, используйте HTTPS-адрес репозитория в команде
+`git clone`.
+
+Можно выполнить те же действия по очереди:
 
 ```bash
 git clone git@github.com:w1do/proxy-xray.git mihomo-proxy-kit
 cd mihomo-proxy-kit
 cp proxy.env.example proxy.env
-nano proxy.env        # fill in SERVER_IP, UUID, PUBLIC_KEY, SHORT_ID
+nano proxy.env        # укажите SERVER_IP, UUID, PUBLIC_KEY и SHORT_ID
 bash ./install.sh
 ```
 
-The script installs Mihomo to `~/.local/bin`, writes `~/.config/mihomo/config.yaml`,
-starts the proxy on `127.0.0.1:7890`, adds proxy variables to `~/.bashrc` and
-`~/.zshrc`, enables the system proxy on macOS, and verifies that the exit IP
-equals `SERVER_IP`. Success looks like `Verified exit IP: <SERVER_IP>`.
-
-After install, open a new terminal or run:
+После успешной установки появится сообщение `Verified exit IP: ...`. Откройте новый
+терминал, чтобы применились переменные прокси, либо выполните:
 
 ```bash
 source ~/.bashrc 2>/dev/null || true
 ```
 
-Check:
+Проверить внешний IP через прокси можно командой:
 
 ```bash
 curl https://api.ipify.org
 ```
 
-It should show the USA server IP.
+Должен отобразиться IP сервера. Для явной проверки через локальный прокси:
+
+```bash
+curl -x http://127.0.0.1:7890 https://api.ipify.org
+```
 
 ## Логи и проверка проксирования
 
 Лог Mihomo: `~/.config/mihomo/mihomo.log`.
 
 ```bash
-# открыть и следить в реальном времени (Ctrl+C - выход)
+# следить за журналом в реальном времени (Ctrl+C — выход)
 tail -f ~/.config/mihomo/mihomo.log
 
-# последние 50 строк
+# показать последние 50 строк
 tail -n 50 ~/.config/mihomo/mihomo.log
 ```
 
 Каждое соединение пишется строкой вида
 `[TCP] 127.0.0.1:48012 --> api.openai.com:443 match DomainSuffix(openai.com) using PROXY[USA]`.
 Фрагмент `using PROXY[USA]` означает, что запрос ушёл через USA-сервер.
-`DIRECT` - напрямую (только локальные адреса).
+`DIRECT` означает прямое соединение; по текущим правилам так идут частные локальные адреса.
 
 Посмотреть проксирование нужных сервисов (OpenAI/ChatGPT, Anthropic/Claude, JetBrains AI):
 
 ```bash
-# в одном терминале - фильтр лога по сервисам
+# в одном терминале — фильтр журнала по сервисам
 tail -f ~/.config/mihomo/mihomo.log | grep -Ei 'openai|chatgpt|anthropic|claude|jetbrains|grazie'
 
-# в другом - сделать запрос
+# в другом терминале — выполнить запросы
 curl -sI https://api.openai.com >/dev/null
 curl -sI https://claude.ai >/dev/null
 ```
@@ -92,16 +110,18 @@ curl -sI https://claude.ai >/dev/null
 Список сервисов, идущих через прокси, - блок `rules:` в `~/.config/mihomo/config.yaml`
 (остальной трафик тоже идёт через `PROXY` по правилу `MATCH`).
 
-## Settings (`proxy.env`)
+## Параметры (`proxy.env`)
 
-- `SERVER_IP`, `UUID`, `PUBLIC_KEY`, `SHORT_ID` - required.
-- `REALITY_SERVER_NAME` - default `dl.google.com`.
-- `PROXY_PORT` - default `7890`.
-- `EXPECTED_EXIT_IP` - default `SERVER_IP`.
+- `SERVER_IP`, `UUID`, `PUBLIC_KEY`, `SHORT_ID` — обязательные параметры.
+- `REALITY_SERVER_NAME` — имя сервера TLS/Reality; по умолчанию `dl.google.com`.
+- `PROXY_PORT` — локальный порт прокси; по умолчанию `7890`.
+- `EXPECTED_EXIT_IP` — ожидаемый внешний IP; по умолчанию равен `SERVER_IP`.
 
-## Troubleshooting
+## Диагностика и управление
 
-- Log: `~/.config/mihomo/mihomo.log`.
-- Re-run `bash ./install.sh` any time; it restarts Mihomo with the current settings.
-- Stop: `kill $(cat ~/.config/mihomo/mihomo.pid)`.
-- Exit codes: 2 missing settings, 3 no Mihomo asset, 4 failed to start, 5 proxy check failed, 6 unexpected exit IP.
+- Журнал: `~/.config/mihomo/mihomo.log`.
+- Повторный запуск `bash ./install.sh` перезапускает Mihomo с текущими настройками.
+- Остановить прокси: `kill "$(cat ~/.config/mihomo/mihomo.pid)"`.
+- Коды завершения: `2` — не заданы обязательные параметры; `3` — не найден архив Mihomo;
+  `4` — Mihomo не запустился; `5` — проверка прокси не прошла; `6` — внешний IP
+  отличается от ожидаемого.
