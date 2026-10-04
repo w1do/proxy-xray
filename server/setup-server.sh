@@ -20,7 +20,25 @@ fi
 set -euo pipefail
 SUDO=""; [ "$(id -u)" -eq 0 ] || SUDO="sudo"
 export DEBIAN_FRONTEND=noninteractive
-if command -v apt-get >/dev/null; then $SUDO apt-get update -qq && $SUDO apt-get install -y -qq curl openssl ca-certificates unzip >/dev/null
+export TERM="${TERM:-dumb}"
+
+# Do not install/reconfigure Xray if another service already owns its listen port.
+if command -v ss >/dev/null 2>&1; then
+  LISTENERS="$( $SUDO ss -H -ltnp 'sport = :443' 2>/dev/null || true )"
+  if [ -n "$LISTENERS" ]; then
+    echo "Port 443/tcp is already in use; Xray was not installed or restarted." >&2
+    echo "$LISTENERS" >&2
+    echo "Stop or reconfigure the listed service, then rerun this script." >&2
+    exit 10
+  fi
+fi
+
+if command -v apt-get >/dev/null; then
+  if ! $SUDO apt-get update -qq; then
+    echo "APT repository update failed. Check/disable the broken repository (for example pkg.cloudflare.com) and rerun." >&2
+    exit 11
+  fi
+  $SUDO apt-get install -y -qq curl openssl ca-certificates unzip iproute2 >/dev/null
 elif command -v dnf >/dev/null; then $SUDO dnf install -y -q curl openssl ca-certificates unzip
 elif command -v yum >/dev/null; then $SUDO yum install -y -q curl openssl ca-certificates unzip
 fi
