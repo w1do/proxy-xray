@@ -5,3 +5,4 @@ proxy.env
 proxy.env.local
 .idea/
 bin/.git/
+.env
