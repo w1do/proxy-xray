@@ -27,6 +27,8 @@ RU_PUBLIC_KEY="${RU_PUBLIC_KEY:-}"
 RU_SHORT_ID="${RU_SHORT_ID:-}"
 RU_REALITY_SERVER_NAME="${RU_REALITY_SERVER_NAME:-dl.google.com}"
 RU_BLOCK=""
+CHAIN_MODE="${CHAIN_MODE:-0}"
+PROXY_MEMBER="USA"
 FINAL_TARGET="PROXY"
 DEFAULT_EXIT_IP="$SERVER_IP"
 if [ -n "$RU_SERVER_IP" ]; then
@@ -35,6 +37,11 @@ if [ -n "$RU_SERVER_IP" ]; then
     exit 2
   fi
   FINAL_TARGET="RU"
+  # An "if" is required here: a standalone "test && cmd" list would abort the
+  # script under set -e whenever CHAIN_MODE is not 1.
+  if [ "$CHAIN_MODE" = "1" ]; then
+    PROXY_MEMBER="RU-NODE"
+  fi
   DEFAULT_EXIT_IP="$RU_SERVER_IP"
   RU_BLOCK="  - name: RU-NODE
     type: vless
@@ -188,7 +195,7 @@ proxy-groups:
   - name: PROXY
     type: select
     proxies:
-      - USA
+      - ${PROXY_MEMBER}
 $( [ -n "$RU_SERVER_IP" ] && printf '  - name: RU\n    type: select\n    proxies:\n      - RU-NODE\n' )
 
 rules:

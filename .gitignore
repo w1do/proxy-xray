@@ -3,6 +3,7 @@
 *.pid
 proxy.env
 proxy.env.local
+proxy.env.usa-backup
 .idea/
 bin/.git/
 .env
