@@ -321,6 +321,11 @@ dns:
   enable: true
   enhanced-mode: fake-ip
   fake-ip-range: 198.18.0.1/16
+  respect-rules: true
+  proxy-server-nameserver:
+    - system
+  direct-nameserver:
+    - system
   nameserver:
     - https://1.1.1.1/dns-query
     - https://8.8.8.8/dns-query
@@ -366,8 +371,53 @@ rules:
   - DOMAIN-SUFFIX,claude.com,PROXY
   - DOMAIN-SUFFIX,claudeusercontent.com,PROXY
   - DOMAIN-SUFFIX,console.anthropic.com,PROXY
+  - DOMAIN-SUFFIX,telegram.org,PROXY
+  - DOMAIN-SUFFIX,t.me,PROXY
+  - DOMAIN-SUFFIX,telegram.me,PROXY
+  - GEOIP,telegram,PROXY
+  - DOMAIN-SUFFIX,whatsapp.com,PROXY
+  - DOMAIN-SUFFIX,whatsapp.net,PROXY
+  - DOMAIN-SUFFIX,youtube.com,PROXY
+  - DOMAIN-SUFFIX,youtu.be,PROXY
+  - DOMAIN-SUFFIX,youtube-nocookie.com,PROXY
+  - DOMAIN-SUFFIX,googlevideo.com,PROXY
+  - DOMAIN-SUFFIX,ytimg.com,PROXY
+  - DOMAIN-SUFFIX,discord.com,PROXY
+  - DOMAIN-SUFFIX,discordapp.com,PROXY
+  - DOMAIN-SUFFIX,discordapp.net,PROXY
+  - DOMAIN-SUFFIX,discordcdn.com,PROXY
+  - DOMAIN-SUFFIX,facebook.com,PROXY
+  - DOMAIN-SUFFIX,fb.com,PROXY
+  - DOMAIN-SUFFIX,facebook.net,PROXY
+  - DOMAIN-SUFFIX,fbcdn.net,PROXY
+  - DOMAIN-SUFFIX,instagram.com,PROXY
+  - DOMAIN-SUFFIX,cdninstagram.com,PROXY
+  - DOMAIN-SUFFIX,threads.net,PROXY
+  - DOMAIN-SUFFIX,x.com,PROXY
+  - DOMAIN-SUFFIX,twitter.com,PROXY
+  - DOMAIN-SUFFIX,t.co,PROXY
+  - DOMAIN-SUFFIX,twimg.com,PROXY
+  - DOMAIN-SUFFIX,linkedin.com,PROXY
+  - DOMAIN-SUFFIX,licdn.com,PROXY
+  - DOMAIN-SUFFIX,signal.org,PROXY
+  - DOMAIN-SUFFIX,whispersystems.org,PROXY
+  - DOMAIN-SUFFIX,viber.com,PROXY
+  - DOMAIN-SUFFIX,viber.me,PROXY
+  - DOMAIN-SUFFIX,reddit.com,PROXY
+  - DOMAIN-SUFFIX,redd.it,PROXY
+  - DOMAIN-SUFFIX,redditmedia.com,PROXY
+  - DOMAIN-SUFFIX,redditstatic.com,PROXY
+  - DOMAIN-SUFFIX,twitch.tv,PROXY
+  - DOMAIN-SUFFIX,jtvnw.net,PROXY
+  - DOMAIN-SUFFIX,tiktok.com,PROXY
+  - DOMAIN-SUFFIX,tiktokv.com,PROXY
+  - DOMAIN-SUFFIX,tiktokcdn.com,PROXY
+  - DOMAIN-SUFFIX,spotify.com,PROXY
+  - DOMAIN-SUFFIX,scdn.co,PROXY
   - GEOIP,PRIVATE,DIRECT,no-resolve
-  - MATCH,${FINAL_TARGET}
+  - GEOSITE,category-ru,DIRECT
+  - GEOIP,RU,DIRECT
+  - MATCH,DIRECT
 EOF
 # Publish the config atomically: a concurrent Mihomo start must never read a
 # half-written file, which surfaces as a bogus "Parse config error".
@@ -575,16 +625,23 @@ if [ "$OS" = "Darwin" ] && command -v networksetup >/dev/null 2>&1; then
 fi
 
 echo "Checking HTTPS through the USA proxy..."
+proxy_exit_ip() {
+  curl --noproxy '' --connect-timeout 10 --max-time 20 -fsS \
+    -x "http://127.0.0.1:${PROXY_PORT}" \
+    https://chatgpt.com/cdn-cgi/trace 2>/dev/null \
+    | sed -n 's/^ip=//p' | head -n 1
+}
+
 EXIT_IP=""
 for _ in 1 2 3 4 5 6; do
-  EXIT_IP="$(curl --noproxy '' --connect-timeout 10 --max-time 20 -fsS \
-    -x "http://127.0.0.1:${PROXY_PORT}" https://api.ipify.org 2>/dev/null)" && break
+  EXIT_IP="$(proxy_exit_ip || true)"
+  if [ -n "$EXIT_IP" ]; then
+    break
+  fi
   EXIT_IP=""
   sleep 3
 done
-if [ -z "$EXIT_IP" ] && ! EXIT_IP="$(curl --noproxy '' --retry 1 --retry-connrefused --retry-delay 1 \
-  --connect-timeout 10 --max-time 20 -fsS \
-  -x "http://127.0.0.1:${PROXY_PORT}" https://api.ipify.org)"; then
+if [ -z "$EXIT_IP" ]; then
   echo "Mihomo was started, but the HTTPS proxy check failed." >&2
   echo "Expected exit IP: $EXPECTED_EXIT_IP" >&2
   echo "Check the VLESS/Reality server and its settings. Log: $LOG_FILE" >&2
