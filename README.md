@@ -25,13 +25,13 @@ You need the proxy credentials from your server: `SERVER_IP`, `UUID`,
 `PUBLIC_KEY`, `SHORT_ID`.
 
 ```bash
-git clone REPO_URL mihomo-proxy-kit && cd mihomo-proxy-kit && cp proxy.env.example proxy.env && nano proxy.env && bash ./install.sh
+git clone git@github.com:w1do/proxy-xray.git mihomo-proxy-kit && cd mihomo-proxy-kit && cp proxy.env.example proxy.env && nano proxy.env && bash ./install.sh
 ```
 
 Or step by step:
 
 ```bash
-git clone REPO_URL mihomo-proxy-kit
+git clone git@github.com:w1do/proxy-xray.git mihomo-proxy-kit
 cd mihomo-proxy-kit
 cp proxy.env.example proxy.env
 nano proxy.env        # fill in SERVER_IP, UUID, PUBLIC_KEY, SHORT_ID
@@ -56,6 +56,41 @@ curl https://api.ipify.org
 ```
 
 It should show the USA server IP.
+
+## Логи и проверка проксирования
+
+Лог Mihomo: `~/.config/mihomo/mihomo.log`.
+
+```bash
+# открыть и следить в реальном времени (Ctrl+C - выход)
+tail -f ~/.config/mihomo/mihomo.log
+
+# последние 50 строк
+tail -n 50 ~/.config/mihomo/mihomo.log
+```
+
+Каждое соединение пишется строкой вида
+`[TCP] 127.0.0.1:48012 --> api.openai.com:443 match DomainSuffix(openai.com) using PROXY[USA]`.
+Фрагмент `using PROXY[USA]` означает, что запрос ушёл через USA-сервер.
+`DIRECT` - напрямую (только локальные адреса).
+
+Посмотреть проксирование нужных сервисов (OpenAI/ChatGPT, Anthropic/Claude, JetBrains AI):
+
+```bash
+# в одном терминале - фильтр лога по сервисам
+tail -f ~/.config/mihomo/mihomo.log | grep -Ei 'openai|chatgpt|anthropic|claude|jetbrains|grazie'
+
+# в другом - сделать запрос
+curl -sI https://api.openai.com >/dev/null
+curl -sI https://claude.ai >/dev/null
+```
+
+В логе должны появиться строки с `using PROXY[USA]`. Ошибки подключения ищите так:
+`grep -Ei 'error|timeout|fail' ~/.config/mihomo/mihomo.log`.
+
+Проверить, что процесс жив: `kill -0 $(cat ~/.config/mihomo/mihomo.pid) && echo running`.
+Список сервисов, идущих через прокси, - блок `rules:` в `~/.config/mihomo/config.yaml`
+(остальной трафик тоже идёт через `PROXY` по правилу `MATCH`).
 
 ## Settings (`proxy.env`)
 
