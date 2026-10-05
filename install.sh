@@ -377,47 +377,19 @@ rules:
   - GEOIP,telegram,PROXY
   - DOMAIN-SUFFIX,whatsapp.com,PROXY
   - DOMAIN-SUFFIX,whatsapp.net,PROXY
-  - DOMAIN-SUFFIX,youtube.com,PROXY
-  - DOMAIN-SUFFIX,youtu.be,PROXY
-  - DOMAIN-SUFFIX,youtube-nocookie.com,PROXY
-  - DOMAIN-SUFFIX,googlevideo.com,PROXY
-  - DOMAIN-SUFFIX,ytimg.com,PROXY
-  - DOMAIN-SUFFIX,discord.com,PROXY
-  - DOMAIN-SUFFIX,discordapp.com,PROXY
-  - DOMAIN-SUFFIX,discordapp.net,PROXY
-  - DOMAIN-SUFFIX,discordcdn.com,PROXY
-  - DOMAIN-SUFFIX,facebook.com,PROXY
-  - DOMAIN-SUFFIX,fb.com,PROXY
-  - DOMAIN-SUFFIX,facebook.net,PROXY
-  - DOMAIN-SUFFIX,fbcdn.net,PROXY
-  - DOMAIN-SUFFIX,instagram.com,PROXY
-  - DOMAIN-SUFFIX,cdninstagram.com,PROXY
-  - DOMAIN-SUFFIX,threads.net,PROXY
-  - DOMAIN-SUFFIX,x.com,PROXY
-  - DOMAIN-SUFFIX,twitter.com,PROXY
-  - DOMAIN-SUFFIX,t.co,PROXY
-  - DOMAIN-SUFFIX,twimg.com,PROXY
-  - DOMAIN-SUFFIX,linkedin.com,PROXY
-  - DOMAIN-SUFFIX,licdn.com,PROXY
-  - DOMAIN-SUFFIX,signal.org,PROXY
-  - DOMAIN-SUFFIX,whispersystems.org,PROXY
-  - DOMAIN-SUFFIX,viber.com,PROXY
-  - DOMAIN-SUFFIX,viber.me,PROXY
-  - DOMAIN-SUFFIX,reddit.com,PROXY
-  - DOMAIN-SUFFIX,redd.it,PROXY
-  - DOMAIN-SUFFIX,redditmedia.com,PROXY
-  - DOMAIN-SUFFIX,redditstatic.com,PROXY
-  - DOMAIN-SUFFIX,twitch.tv,PROXY
-  - DOMAIN-SUFFIX,jtvnw.net,PROXY
-  - DOMAIN-SUFFIX,tiktok.com,PROXY
-  - DOMAIN-SUFFIX,tiktokv.com,PROXY
-  - DOMAIN-SUFFIX,tiktokcdn.com,PROXY
-  - DOMAIN-SUFFIX,spotify.com,PROXY
-  - DOMAIN-SUFFIX,scdn.co,PROXY
+  # Local/private
   - GEOIP,PRIVATE,DIRECT,no-resolve
+  - DOMAIN-SUFFIX,local,DIRECT
+  - DOMAIN-SUFFIX,localhost,DIRECT
+
+  # Russia direct
   - GEOSITE,category-ru,DIRECT
+  - DOMAIN-SUFFIX,ru,DIRECT
+  - DOMAIN-SUFFIX,рф,DIRECT
   - GEOIP,RU,DIRECT
-  - MATCH,DIRECT
+
+  # Everything else through proxy
+  - MATCH,PROXY
 EOF
 # Publish the config atomically: a concurrent Mihomo start must never read a
 # half-written file, which surfaces as a bogus "Parse config error".
