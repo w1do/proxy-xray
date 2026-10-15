@@ -2,6 +2,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+if [ "$(uname -s)" = Linux ]; then
+  exec python3 "$SCRIPT_DIR/tools/install-client.py" "$@"
+fi
 ENV_FILE="$SCRIPT_DIR/proxy.env"
 FALLBACK_ENV_FILE="$SCRIPT_DIR/.env"
 

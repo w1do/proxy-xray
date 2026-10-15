@@ -11,3 +11,5 @@ server/xray-config.json
 servers/xray-nl-config.json
 servers/xray-usa-config.json
 /graphify-out/
+.memory/*
+!.memory/annotations.json
