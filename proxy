@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+KIT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+export KIT_ROOT
+exec python3 "$KIT_ROOT/tools/proxy_cli.py" "$@"
