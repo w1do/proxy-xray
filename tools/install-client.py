@@ -107,7 +107,7 @@ def xray_config(env, row):
                            'streamSettings': {'network': 'xhttp', 'security': 'reality',
                                               'xhttpSettings': row['xhttp'],
                                               'realitySettings': {'serverName': row['sni'],
-                                                                  'fingerprint': 'chrome',
+                                                                  'fingerprint': env.get('CLIENT_FINGERPRINT', 'firefox'),
                                                                   'password': row['pbk'],
                                                                   'shortId': row['sid']}}}]}
 
