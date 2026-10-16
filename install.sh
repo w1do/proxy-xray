@@ -5,6 +5,9 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 if [ "$(uname -s)" = Linux ]; then
   exec python3 "$SCRIPT_DIR/tools/install-client.py" "$@"
 fi
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/tools/macos-chain.sh"
+USA_EXIT="${1:-}"
 ENV_FILE="$SCRIPT_DIR/proxy.env"
 FALLBACK_ENV_FILE="$SCRIPT_DIR/.env"
 
@@ -16,7 +19,7 @@ FALLBACK_ENV_FILE="$SCRIPT_DIR/.env"
 AMBIENT_OVERRIDES=""
 for VAR in SERVER_IP UUID PUBLIC_KEY SHORT_ID REALITY_SERVER_NAME PROXY_PORT \
   CLIENT_FINGERPRINT EXPECTED_EXIT_IP RU_SERVER_IP RU_UUID RU_PUBLIC_KEY \
-  RU_SHORT_ID RU_REALITY_SERVER_NAME CHAIN_MODE CHAIN_ALL; do
+  RU_SHORT_ID RU_REALITY_SERVER_NAME CHAIN_MODE CHAIN_ALL XRAY_CHAIN; do
   if [ -n "${!VAR:-}" ]; then
     AMBIENT_OVERRIDES="$AMBIENT_OVERRIDES $VAR"
     unset "$VAR"
@@ -41,13 +44,22 @@ PUBLIC_KEY="${PUBLIC_KEY:-}"
 SHORT_ID="${SHORT_ID:-}"
 REALITY_SERVER_NAME="${REALITY_SERVER_NAME:-dl.google.com}"
 PROXY_PORT="${PROXY_PORT:-7890}"
-SERVER_PORT="${SERVER_PORT:-443}"
+SERVER_PORT="${SERVER_PORT:-}"
+if [ -z "$SERVER_PORT" ] && [ -z "$USA_EXIT" ]; then SERVER_PORT=443; fi
 XHTTP_PATH="${XHTTP_PATH:-}"
 XHTTP_MODE="${XHTTP_MODE:-auto}"
 GRPC_SERVICE_NAME="${GRPC_SERVICE_NAME:-}"
+XRAY_CHAIN="${XRAY_CHAIN:-1}"
+case "$XRAY_CHAIN" in 0|1) ;; *) echo "XRAY_CHAIN must be 0 or 1" >&2; exit 2 ;; esac
+if [ -n "$USA_EXIT" ]; then
+  SERVER_PORT="${SERVER_PORT:-$(nl_allowed_ports "$USA_EXIT" 2>/dev/null | cut -d' ' -f1 || true)}"
+  SERVER_NETWORK="${SERVER_NETWORK:-xhttp}"
+  if [ "$SERVER_NETWORK" = "xhttp" ]; then XHTTP_PATH="${XHTTP_PATH:-/dl}"; fi
+fi
 if [ -z "${SERVER_NETWORK:-}" ]; then
   if [ -n "$XHTTP_PATH" ]; then SERVER_NETWORK="xhttp"; else SERVER_NETWORK="tcp"; fi
 fi
+if [ "${SERVER_NETWORK:-}" = "xhttp" ] && [ -z "$XHTTP_PATH" ]; then XHTTP_PATH="/"; fi
 case "$SERVER_NETWORK" in
   xhttp)
     NETWORK_BLOCK="    network: xhttp
@@ -113,12 +125,19 @@ if [ -n "$RU_SERVER_IP" ]; then
 "
 fi
 EXPECTED_EXIT_IP="${EXPECTED_EXIT_IP:-$DEFAULT_EXIT_IP}"
+if [ -n "$USA_EXIT" ]; then
+  nl_check_exit_port "$USA_EXIT" "$SERVER_PORT" || exit 2
+  EXPECTED_EXIT_IP="$USA_EXIT"
+fi
+USE_XRAY_CHAIN=0
+if [ "$(uname -s)" = "Darwin" ] && [ "$XRAY_CHAIN" = "1" ]; then USE_XRAY_CHAIN=1; fi
 
 if [ -z "$SERVER_IP" ] || [ -z "$UUID" ] || [ -z "$PUBLIC_KEY" ] || [ -z "$SHORT_ID" ]; then
   echo "Missing settings in proxy.env."
   echo "Required: SERVER_IP, UUID, PUBLIC_KEY, SHORT_ID"
   exit 2
 fi
+if [ "$USE_XRAY_CHAIN" = "1" ]; then chain_validate_settings || exit 2; fi
 
 OS="$(uname -s)"
 ARCH="$(uname -m)"
@@ -156,6 +175,11 @@ KEEPALIVE="$BIN_DIR/mihomo-keepalive.sh"
 SYSTEMD_UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 SYSTEMD_UNIT="$SYSTEMD_UNIT_DIR/mihomo.service"
 LAUNCH_AGENT="$HOME/Library/LaunchAgents/com.mihomo.proxy.plist"
+XRAY_BIN="$BIN_DIR/xray"
+XRAY_CONFIG="$CONFIG_DIR/xray-client.json"
+XRAY_LOG="$CONFIG_DIR/xray.log"
+XRAY_PID_FILE="$CONFIG_DIR/xray.pid"
+XRAY_AGENT="$HOME/Library/LaunchAgents/${XRAY_AGENT_LABEL}.plist"
 CRON_BEGIN="# mihomo local proxy begin"
 CRON_END="# mihomo local proxy end"
 
@@ -272,7 +296,7 @@ TMP_FILE="$(mktemp)"
 NEW_BIN="$(mktemp "$BIN_DIR/.mihomo.XXXXXX")"
 TMP_CONFIG="$CONFIG_DIR/.config.yaml.new"
 cleanup() {
-  rm -f "$TMP_FILE" "$NEW_BIN" "$TMP_CONFIG"
+  rm -f "$TMP_FILE" "$NEW_BIN" "$TMP_CONFIG" "$CONFIG_DIR/.xray-client.json.new"
   rmdir "$LOCK_DIR" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -341,6 +365,38 @@ chmod +x "$NEW_BIN"
 # ETXTBSY on Linux when the old Mihomo process is still executing that inode.
 mv -f "$NEW_BIN" "$BIN"
 
+if [ "$USE_XRAY_CHAIN" = "1" ]; then
+  chain_secure_dir "$CONFIG_DIR" || exit 8
+  install_xray_darwin "$SCRIPT_DIR" "$BIN_DIR" || exit 8
+  chain_write_xray_config "$CONFIG_DIR/.xray-client.json.new" || exit 8
+  if ! XRAY_TEST="$("$XRAY_BIN" run -test -config "$CONFIG_DIR/.xray-client.json.new" 2>&1)"; then
+    echo "Xray config test failed:" >&2; printf '%s\n' "$XRAY_TEST" | tail -n 20 >&2; exit 8
+  fi
+  mv -f "$CONFIG_DIR/.xray-client.json.new" "$XRAY_CONFIG"
+  USA_PROXY_BLOCK="$(render_usa_socks_block)"
+else
+  USA_PROXY_BLOCK="$(cat <<EOF
+  - name: USA
+    type: vless
+    server: ${SERVER_IP}
+    port: ${SERVER_PORT}
+    uuid: ${UUID}
+    encryption: ""
+${NETWORK_BLOCK}
+    tls: true
+    skip-cert-verify: true
+    udp: true
+${FLOW_BLOCK}
+    packet-encoding: xudp
+    servername: ${REALITY_SERVER_NAME}
+    client-fingerprint: ${CLIENT_FINGERPRINT}
+    reality-opts:
+      public-key: ${PUBLIC_KEY}
+      short-id: ${SHORT_ID}
+EOF
+)"
+fi
+
 cat > "$TMP_CONFIG" <<EOF
 mixed-port: ${PROXY_PORT}
 allow-lan: false
@@ -362,23 +418,7 @@ dns:
     - https://8.8.8.8/dns-query
 
 proxies:
-  - name: USA
-    type: vless
-    server: ${SERVER_IP}
-    port: ${SERVER_PORT}
-    uuid: ${UUID}
-    encryption: ""
-${NETWORK_BLOCK}
-    tls: true
-    skip-cert-verify: true
-    udp: true
-${FLOW_BLOCK}
-    packet-encoding: xudp
-    servername: ${REALITY_SERVER_NAME}
-    client-fingerprint: ${CLIENT_FINGERPRINT}
-    reality-opts:
-      public-key: ${PUBLIC_KEY}
-      short-id: ${SHORT_ID}
+${USA_PROXY_BLOCK}
 ${RU_BLOCK}
 proxy-groups:
   - name: PROXY
@@ -469,8 +509,83 @@ case "$SUPERVISOR" in
     ;;
   launchd)
     write_launch_agent
+    if [ "$USE_XRAY_CHAIN" = "1" ]; then render_xray_launch_agent "$XRAY_BIN" "$XRAY_CONFIG" "$XRAY_LOG" > "$XRAY_AGENT"; fi
     ;;
 esac
+
+# Local Xray of the macOS chain (Mihomo -> 127.0.0.1:18080 -> NL). Stop the previous
+# instance first, then start it again only when the chain is enabled.
+if command -v launchctl >/dev/null 2>&1; then
+  launchctl bootout "gui/$(id -u)" "$XRAY_AGENT" >/dev/null 2>&1 || true
+fi
+if [ -f "$XRAY_PID_FILE" ]; then
+  OLD_XRAY_PID="$(cat "$XRAY_PID_FILE" 2>/dev/null || true)"
+  if [[ "$OLD_XRAY_PID" =~ ^[0-9]+$ ]] && kill -0 "$OLD_XRAY_PID" 2>/dev/null; then
+    OLD_XRAY_ARGS="$(ps -p "$OLD_XRAY_PID" -o args= 2>/dev/null || true)"
+    case "$OLD_XRAY_ARGS" in
+      "$XRAY_BIN run"*)
+        kill "$OLD_XRAY_PID" 2>/dev/null || true
+        rm -f "$XRAY_PID_FILE"
+        ;;
+    esac
+  fi
+fi
+if [ "$USE_XRAY_CHAIN" = "0" ]; then
+  rm -f "$XRAY_AGENT"
+else
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if chain_port_listening "$XRAY_SOCKS_PORT"; then sleep 1; else break; fi
+  done
+  if chain_port_listening "$XRAY_SOCKS_PORT"; then
+    echo "127.0.0.1:${XRAY_SOCKS_PORT} is busy: another process listens on it. Stop it and run install.sh again." >&2
+    exit 9
+  fi
+  # The log may hold Xray diagnostics; create it owner-only before the agent or nohup writes to it.
+  ( umask 077; : >> "$XRAY_LOG" )
+  chmod 600 "$XRAY_LOG"
+  case "$SUPERVISOR" in
+    launchd)
+      XRAY_BOOTSTRAPPED=0
+      for _ in 1 2 3; do
+        if launchctl bootstrap "gui/$(id -u)" "$XRAY_AGENT" >/dev/null 2>&1; then
+          XRAY_BOOTSTRAPPED=1
+          break
+        fi
+        sleep 1
+      done
+      if [ "$XRAY_BOOTSTRAPPED" != "1" ]; then
+        launchctl unload "$XRAY_AGENT" >/dev/null 2>&1 || true
+        launchctl load -w "$XRAY_AGENT" >/dev/null 2>&1 || true
+      fi
+      ;;
+    *)
+      env -u http_proxy -u https_proxy -u all_proxy -u no_proxy \
+        -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u NO_PROXY \
+        -u WS_PROXY -u WSS_PROXY -u ws_proxy -u wss_proxy \
+        nohup "$XRAY_BIN" run -config "$XRAY_CONFIG" >> "$XRAY_LOG" 2>&1 &
+      XRAY_PID="$!"
+      echo "$XRAY_PID" > "$XRAY_PID_FILE"
+      ;;
+  esac
+  XRAY_UP=0
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if chain_port_listening "$XRAY_SOCKS_PORT"; then XRAY_UP=1; break; fi
+    sleep 1
+  done
+  XRAY_ALIVE=0
+  if [ "$XRAY_UP" = "1" ]; then
+    if [ "$SUPERVISOR" = "launchd" ]; then
+      launchctl print "gui/$(id -u)/${XRAY_AGENT_LABEL}" >/dev/null 2>&1 && XRAY_ALIVE=1
+    else
+      kill -0 "$XRAY_PID" 2>/dev/null && XRAY_ALIVE=1
+    fi
+  fi
+  if [ "$XRAY_UP" != "1" ] || [ "$XRAY_ALIVE" != "1" ]; then
+    echo "Xray did not start or open 127.0.0.1:${XRAY_SOCKS_PORT}. See: $XRAY_LOG" >&2
+    tail -n 20 "$XRAY_LOG" >&2 || true
+    exit 9
+  fi
+fi
 
 # Stop the instance of the previous run. The pid file alone is not enough: a
 # leftover instance (or one started outside install.sh) keeps the port busy and
@@ -650,6 +765,10 @@ if [ -z "$EXIT_IP" ]; then
   echo "Check the VLESS/Reality server and its settings. Log: $LOG_FILE" >&2
   echo "Last Mihomo log lines:" >&2
   tail -n 30 "$LOG_FILE" >&2 || true
+  if [ "$USE_XRAY_CHAIN" = "1" ]; then
+    echo "Last Xray log lines:" >&2
+    tail -n 30 "$XRAY_LOG" >&2 || true
+  fi
   exit 5
 fi
 
@@ -659,6 +778,10 @@ if [ "$EXIT_IP" != "$EXPECTED_EXIT_IP" ]; then
   echo "Log: $LOG_FILE" >&2
   echo "Last Mihomo log lines:" >&2
   tail -n 30 "$LOG_FILE" >&2 || true
+  if [ "$USE_XRAY_CHAIN" = "1" ]; then
+    echo "Last Xray log lines:" >&2
+    tail -n 30 "$XRAY_LOG" >&2 || true
+  fi
   exit 6
 fi
 
@@ -668,6 +791,9 @@ echo "Config: $CONFIG_DIR/config.yaml"
 echo "Log: $LOG_FILE"
 echo
 echo "Verified exit IP: $EXIT_IP"
+if [ "$USE_XRAY_CHAIN" = "1" ]; then
+  echo "Chain: Mihomo 127.0.0.1:${PROXY_PORT} -> Xray 127.0.0.1:${XRAY_SOCKS_PORT} -> ${SERVER_IP}:${SERVER_PORT} -> ${EXPECTED_EXIT_IP}"
+fi
 echo
 echo "Open a new terminal, or run:"
 echo "source ~/.bashrc 2>/dev/null || true"
@@ -681,6 +807,7 @@ case "$SUPERVISOR" in
   launchd)
     echo "Always-on: LaunchAgent 'com.mihomo.proxy' (RunAtLoad + KeepAlive),"
     echo "so Mihomo starts at login and restarts after a crash."
+    if [ "$USE_XRAY_CHAIN" = "1" ]; then echo "LaunchAgent 'com.mihomo.xray' keeps Xray running."; fi
     ;;
   cron)
     echo "Always-on: crontab watchdog 'mihomo-keepalive.sh' runs at reboot and every minute."

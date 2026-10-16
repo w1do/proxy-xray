@@ -21,6 +21,8 @@ MIHOMO = HOME / '.local/bin/mihomo'
 XRAY_DIR = HOME / '.config/mihomo'
 UNIT_DIR = HOME / '.config/systemd/user'
 NO_PROXY_ENV = {k: v for k, v in os.environ.items() if not k.lower().endswith('_proxy')}
+NL_PORTS = {'108.61.222.91': frozenset({2083, 2084, 2085, 2086}),
+            '149.28.240.154': frozenset({2087, 2088, 2089, 2090})}
 
 
 def run(args, **kwargs):
@@ -78,7 +80,7 @@ def install_binaries(env):
 
 
 def profile_from_settings(env, requested):
-    allowed_ports = {'108.61.222.91': {2083, 2084, 2085, 2086}, '149.28.240.154': {2087}}[requested]
+    allowed_ports = NL_PORTS[requested]
     port = int(env.get('SERVER_PORT') or min(allowed_ports))
     if port not in allowed_ports:
         raise RuntimeError(f'Для выхода {requested} нужен вход NL:{"/".join(str(p) for p in sorted(allowed_ports))}, а указан порт {port}')
@@ -228,7 +230,7 @@ export wss_proxy=$http_proxy
 def main():
     env = settings()
     requested = sys.argv[1] if len(sys.argv) > 1 else '149.28.240.154'
-    if requested not in ('149.28.240.154', '108.61.222.91'):
+    if requested not in NL_PORTS:
         raise RuntimeError('Укажите IP USA2 149.28.240.154 или USA1 108.61.222.91')
     row = profile_from_settings(env, requested)
     if env.get('ADMIN_SSH_TUNNEL', '0') not in ('0', '1'):

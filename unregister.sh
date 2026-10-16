@@ -8,6 +8,10 @@ BIN="$BIN_DIR/mihomo"
 KEEPALIVE="$BIN_DIR/mihomo-keepalive.sh"
 SYSTEMD_UNIT="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/mihomo.service"
 LAUNCH_AGENT="$HOME/Library/LaunchAgents/com.mihomo.proxy.plist"
+XRAY_BIN="$BIN_DIR/xray"
+XRAY_MARKER="$BIN_DIR/.xray-mihomo-kit.sha256"
+XRAY_AGENT="$HOME/Library/LaunchAgents/com.mihomo.xray.plist"
+SYSTEMD_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 CRON_BEGIN="# mihomo local proxy begin"
 CRON_END="# mihomo local proxy end"
 MARKER_BEGIN="# mihomo local proxy begin"
@@ -79,6 +83,10 @@ stop_systemd() {
   command -v systemctl >/dev/null 2>&1 || return 0
   systemctl --user disable --now mihomo.service >/dev/null 2>&1 || true
   rm -f "$SYSTEMD_UNIT"
+  systemctl --user disable --now xray-mihomo.service >/dev/null 2>&1 || true
+  rm -f "$SYSTEMD_DIR/xray-mihomo.service"
+  systemctl --user disable --now xhttp-nl-admin-tunnel.service >/dev/null 2>&1 || true
+  rm -f "$SYSTEMD_DIR/xhttp-nl-admin-tunnel.service"
   systemctl --user daemon-reload >/dev/null 2>&1 || true
 }
 
@@ -87,6 +95,9 @@ stop_launchd() {
   launchctl bootout "gui/$(id -u)" "$LAUNCH_AGENT" >/dev/null 2>&1 || true
   launchctl unload "$LAUNCH_AGENT" >/dev/null 2>&1 || true
   rm -f "$LAUNCH_AGENT"
+  launchctl bootout "gui/$(id -u)" "$XRAY_AGENT" >/dev/null 2>&1 || true
+  launchctl unload "$XRAY_AGENT" >/dev/null 2>&1 || true
+  rm -f "$XRAY_AGENT"
 }
 
 stop_standalone_process() {
@@ -98,6 +109,47 @@ stop_standalone_process() {
   command="$(ps -p "$pid" -o args= 2>/dev/null || true)"
   if [[ "$command" == *"$BIN"* && "$command" == *"$CONFIG_DIR"* ]]; then
     kill "$pid" 2>/dev/null || true
+  fi
+}
+
+stop_standalone_xray() {
+  local pid command
+  [ -f "$CONFIG_DIR/xray.pid" ] || return 0
+  pid="$(cat "$CONFIG_DIR/xray.pid" 2>/dev/null || true)"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  kill -0 "$pid" 2>/dev/null || return 0
+  command="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+  case "$command" in
+    "$XRAY_BIN run"*) kill "$pid" 2>/dev/null || true ;;
+  esac
+}
+
+# Removes ~/.local/bin/xray only when this kit installed it (marker holds its sha256).
+# Without a marker: macOS keeps the file (not ours); Linux keeps the existing removal,
+# because install-client.py installs xray without writing a marker.
+remove_local_xray() {
+  local recorded digest
+  if [ ! -f "$XRAY_MARKER" ]; then
+    if [ "$(uname -s)" = "Darwin" ]; then
+      echo "Keeping $XRAY_BIN: no ownership marker, so this kit did not install it." >&2
+      return 0
+    fi
+    rm -f "$XRAY_BIN"
+    return 0
+  fi
+  recorded="$(cat "$XRAY_MARKER" 2>/dev/null || true)"
+  digest=""
+  if [ -f "$XRAY_BIN" ]; then
+    if command -v shasum >/dev/null 2>&1; then
+      digest="$(shasum -a 256 "$XRAY_BIN" 2>/dev/null | awk '{print $1}' || true)"
+    elif command -v sha256sum >/dev/null 2>&1; then
+      digest="$(sha256sum "$XRAY_BIN" 2>/dev/null | awk '{print $1}' || true)"
+    fi
+  fi
+  if [ -n "$recorded" ] && [ "$recorded" = "$digest" ]; then
+    rm -f "$XRAY_BIN" "$XRAY_MARKER"
+  else
+    echo "Keeping $XRAY_BIN: it does not match the ownership marker $XRAY_MARKER." >&2
   fi
 }
 
@@ -120,16 +172,18 @@ stop_systemd
 stop_launchd
 remove_cron_block
 stop_standalone_process
+stop_standalone_xray
 stop_codex_daemon
 remove_marked_block "$HOME/.bashrc"
 remove_marked_block "$HOME/.zshrc"
 remove_claude_proxy_env
 
 rm -f "$BIN" "$KEEPALIVE"
+remove_local_xray
 rm -rf "$CONFIG_DIR"
 
 unset http_proxy https_proxy all_proxy no_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY
 unset WS_PROXY WSS_PROXY ws_proxy wss_proxy
 
-echo "Mihomo proxy removed: service, autostart, shell variables, Claude Code proxy env, binary and config."
+echo "Mihomo and local Xray proxy removed: service, autostart, shell variables, Claude Code proxy env, binary and config."
 echo "Open a new terminal, or run: exec \"${SHELL:-bash}\" -l"
