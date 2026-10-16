@@ -229,17 +229,18 @@ def main():
     check(['systemctl', '--user', 'restart', 'xray-mihomo.service'], 'Xray не перезапустился')
     check(['systemctl', '--user', 'enable', '--now', 'mihomo.service'], 'Mihomo не запустился')
     check(['systemctl', '--user', 'restart', 'mihomo.service'], 'Mihomo не перезапустился')
-    for _ in range(8):
+    for _ in range(3):
         time.sleep(1)
-        result = run(['curl', '--noproxy', '', '-fsS', '--max-time', '12',
-                      '-x', 'http://127.0.0.1:7890', 'https://api.ipify.org'], timeout=15)
+        result = run(['curl', '--noproxy', '', '-fsS', '--max-time', '10',
+                      '-x', 'http://127.0.0.1:7890', 'https://api.ipify.org'], timeout=13)
         if result.returncode == 0 and result.stdout.strip() == requested:
             configure_shell()
             print(f'Установлено: WSL -> Xray -> NL:{row["port"]} -> {requested}')
             print('Локальный прокси: http://127.0.0.1:7890')
             print(f'Проверенный выходной IP: {requested}')
             return
-    raise RuntimeError('Прокси не прошёл проверку IP. Xray: ' +
+    raise RuntimeError(f'Нет подтверждённого выхода через NL:{row["port"]} -> {requested}. '
+                       'Проверьте UUID для этого порта и сеть/VPN клиента. Xray: ' +
                        run(['systemctl', '--user', 'is-active', 'xray-mihomo.service']).stdout.strip() +
                        ', Mihomo: ' + run(['systemctl', '--user', 'is-active', 'mihomo.service']).stdout.strip() +
                        ', curl: ' + result.stderr.strip()[-250:])
