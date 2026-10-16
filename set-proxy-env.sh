@@ -13,7 +13,11 @@ if [ "$#" -eq 0 ]; then
   exit 2
 fi
 
-declare -A VALUES=()
+value_of() {
+  local name="VALUE_$1"
+  printf '%s' "${!name:-}"
+}
+
 for ARG in "$@"; do
   case "$ARG" in
     *=*) KEY="${ARG%%=*}"; VALUE="${ARG#*=}" ;;
@@ -27,11 +31,11 @@ for ARG in "$@"; do
     echo "Invalid value for $KEY: allowed characters are letters, digits, . _ : / -" >&2
     exit 2
   fi
-  VALUES[$KEY]="$VALUE"
+  printf -v "VALUE_$KEY" '%s' "$VALUE"
 done
 
 for KEY in $REQUIRED; do
-  if [ -z "${VALUES[$KEY]:-}" ]; then
+  if [ -z "$(value_of "$KEY")" ]; then
     echo "Missing required setting: $KEY" >&2
     exit 2
   fi
@@ -46,12 +50,12 @@ umask 077
 {
   echo "# Keep this file private. Anyone with it can use the proxy."
   for KEY in $ALLOWED; do
-    if [ -n "${VALUES[$KEY]:-}" ]; then
-      echo "$KEY=${VALUES[$KEY]}"
+    if [ -n "$(value_of "$KEY")" ]; then
+      echo "$KEY=$(value_of "$KEY")"
     fi
   done
 } > "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 
 echo "Written: $ENV_FILE (mode 600)"
-echo "Settings: $(for KEY in $ALLOWED; do [ -n "${VALUES[$KEY]:-}" ] && printf '%s ' "$KEY"; done)"
+echo "Settings: $(for KEY in $ALLOWED; do [ -n "$(value_of "$KEY")" ] && printf '%s ' "$KEY"; done)"
