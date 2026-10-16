@@ -8,6 +8,7 @@ from pathlib import Path
 import platform
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -95,12 +96,13 @@ def profile_from_settings(env, requested):
 
 
 def xray_config(env, row):
+    admin_tunnel = env.get('ADMIN_SSH_TUNNEL', '0') == '1'
     return {'log': {'loglevel': 'warning'},
             'inbounds': [{'listen': '127.0.0.1', 'port': 18080,
                           'protocol': 'socks', 'settings': {'udp': True}}],
             'outbounds': [{'protocol': 'vless',
-                           'settings': {'vnext': [{'address': env['SERVER_IP'],
-                                                  'port': row['port'],
+                           'settings': {'vnext': [{'address': '127.0.0.1' if admin_tunnel else env['SERVER_IP'],
+                                                  'port': 22000 if admin_tunnel else row['port'],
                                                   'users': [{'id': row['uuid'], 'encryption': 'none'}]}]},
                            'streamSettings': {'network': 'xhttp', 'security': 'reality',
                                               'xhttpSettings': row['xhttp'],
@@ -154,11 +156,12 @@ def atomic_write(path, content, mode=0o600):
     temporary.replace(path)
 
 
-def service(name, binary, config, log):
+def service(name, binary, config, log, requires=None):
+    dependency = f'Requires={requires}\nAfter={requires}\n' if requires else ''
     return f'''[Unit]
 Description={name} local proxy
 After=network-online.target
-Wants=network-online.target
+{dependency}Wants=network-online.target
 StartLimitIntervalSec=0
 
 [Service]
@@ -169,6 +172,22 @@ RestartSec=3
 UnsetEnvironment=http_proxy https_proxy all_proxy no_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY WS_PROXY WSS_PROXY ws_proxy wss_proxy
 StandardOutput=append:{log}
 StandardError=append:{log}
+
+[Install]
+WantedBy=default.target
+'''
+
+
+def admin_tunnel_service(env, row):
+    return f'''[Unit]
+Description=Admin-only SSH transport to NL XHTTP
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ssh -F /dev/null -o BatchMode=yes -o StrictHostKeyChecking=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -N -L 127.0.0.1:22000:127.0.0.1:{row['port']} root@{env['SERVER_IP']}
+Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=default.target
@@ -206,6 +225,13 @@ def main():
     if requested not in ('149.28.240.154', '108.61.222.91'):
         raise RuntimeError('Укажите IP USA2 149.28.240.154 или USA1 108.61.222.91')
     row = profile_from_settings(env, requested)
+    if env.get('ADMIN_SSH_TUNNEL', '0') not in ('0', '1'):
+        raise RuntimeError('ADMIN_SSH_TUNNEL должен быть 0 или 1')
+    admin_tunnel = env.get('ADMIN_SSH_TUNNEL') == '1'
+    if admin_tunnel:
+        check(['ssh', '-F', '/dev/null', '-o', 'BatchMode=yes',
+               '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=8',
+               'root@' + env['SERVER_IP'], 'true'], 'Административный SSH к NL недоступен')
     install_binaries(env)
     config = xray_config(env, row)
     yaml = mihomo_config()
@@ -221,10 +247,27 @@ def main():
     atomic_write(XRAY_DIR / 'config.yaml', yaml)
     atomic_write(UNIT_DIR / 'xray-mihomo.service',
                  service('Xray', XRAY, f'run -config {XRAY_DIR / "xray-client.json"}',
-                         XRAY_DIR / 'xray.log'), 0o644)
+                         XRAY_DIR / 'xray.log',
+                         'xhttp-nl-admin-tunnel.service' if admin_tunnel else None), 0o644)
     atomic_write(UNIT_DIR / 'mihomo.service',
                  service('Mihomo', MIHOMO, f'-d {XRAY_DIR}', XRAY_DIR / 'mihomo.log'), 0o644)
+    if admin_tunnel:
+        atomic_write(UNIT_DIR / 'xhttp-nl-admin-tunnel.service',
+                     admin_tunnel_service(env, row), 0o644)
     check(['systemctl', '--user', 'daemon-reload'], 'Не удалось перечитать systemd')
+    if admin_tunnel:
+        check(['systemctl', '--user', 'enable', '--now', 'xhttp-nl-admin-tunnel.service'],
+              'Административный SSH-туннель не запустился')
+        check(['systemctl', '--user', 'restart', 'xhttp-nl-admin-tunnel.service'],
+              'Административный SSH-туннель не перезапустился')
+        for _ in range(20):
+            try:
+                with socket.create_connection(('127.0.0.1', 22000), timeout=1):
+                    break
+            except OSError:
+                time.sleep(0.5)
+        else:
+            raise RuntimeError('Административный SSH-туннель не открыл порт 22000')
     check(['systemctl', '--user', 'enable', '--now', 'xray-mihomo.service'], 'Xray не запустился')
     check(['systemctl', '--user', 'restart', 'xray-mihomo.service'], 'Xray не перезапустился')
     check(['systemctl', '--user', 'enable', '--now', 'mihomo.service'], 'Mihomo не запустился')

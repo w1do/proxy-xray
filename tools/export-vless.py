@@ -48,6 +48,8 @@ def make_install_command(row, existing=False):
         'XHTTP_PATH': row['xhttp'].get('path', '/dl'),
         'XHTTP_MODE': row['xhttp'].get('mode', 'auto'),
     }
+    if existing:
+        settings['ADMIN_SSH_TUNNEL'] = '1'
     arguments = ' '.join(shlex.quote(f'{key}={value}') for key, value in settings.items())
     prefix = (f'cd {shlex.quote(str(ROOT))} && ' if existing else
               'git clone https://github.com/w1do/proxy-xray.git proxy && cd proxy && ')
