@@ -6,7 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 ENV_FILE="$SCRIPT_DIR/proxy.env"
 REQUIRED="SERVER_IP SERVER_PORT UUID PUBLIC_KEY SHORT_ID"
-ALLOWED="$REQUIRED SERVER_PORT SERVER_NETWORK XHTTP_PATH XHTTP_MODE REALITY_SERVER_NAME PROXY_PORT CLIENT_FINGERPRINT EXPECTED_EXIT_IP RU_SERVER_IP RU_UUID RU_PUBLIC_KEY RU_SHORT_ID RU_REALITY_SERVER_NAME CHAIN_MODE"
+ALLOWED="$REQUIRED SERVER_NETWORK XHTTP_PATH XHTTP_MODE GRPC_SERVICE_NAME REALITY_SERVER_NAME PROXY_PORT CLIENT_FINGERPRINT EXPECTED_EXIT_IP ADMIN_SSH_TUNNEL RU_SERVER_IP RU_UUID RU_PUBLIC_KEY RU_SHORT_ID RU_REALITY_SERVER_NAME CHAIN_MODE CHAIN_ALL"
 
 if [ "$#" -eq 0 ]; then
   echo "Usage: bash ./set-proxy-env.sh SERVER_IP=... SERVER_PORT=2083|2087 UUID=... PUBLIC_KEY=... SHORT_ID=..."
@@ -33,6 +33,23 @@ for ARG in "$@"; do
   fi
   printf -v "VALUE_$KEY" '%s' "$VALUE"
 done
+
+if [ -f "$ENV_FILE" ]; then
+  while IFS= read -r LINE || [ -n "$LINE" ]; do
+    case "$LINE" in
+      ''|'#'*) continue ;;
+    esac
+    KEY="${LINE%%=*}"
+    VALUE="${LINE#*=}"
+    case " $ALLOWED " in
+      *" $KEY "*) ;;
+      *) continue ;;
+    esac
+    if [ -z "$(value_of "$KEY")" ] && [ -n "$VALUE" ]; then
+      printf -v "VALUE_$KEY" '%s' "$VALUE"
+    fi
+  done < "$ENV_FILE"
+fi
 
 for KEY in $REQUIRED; do
   if [ -z "$(value_of "$KEY")" ]; then

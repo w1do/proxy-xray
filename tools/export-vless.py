@@ -13,7 +13,7 @@ out={o.get('tag'):o for o in c.get('outbounds',[])}
 rows=[]
 for i in c['inbounds']:
  s=i.get('streamSettings',{})
- if s.get('network')!='xhttp' or s.get('security')!='reality': continue
+ if s.get('network') not in ('xhttp','tcp','grpc') or s.get('security')!='reality': continue
  r=s['realitySettings']; k=subprocess.run(['/usr/local/x-ui/bin/xray-linux-amd64','x25519','-i',r['privateKey']],capture_output=True,text=True,check=True).stdout
  pub=next(x.split(':',1)[1].strip() for x in k.splitlines() if x.lower().startswith(('password','public')))
  clients=i.get('settings',{}).get('clients',[])
@@ -21,9 +21,13 @@ for i in c['inbounds']:
  route=next((x for x in c.get('routing',{}).get('rules',[]) if tag in x.get('inboundTag',[])),{})
  o=out.get(route.get('outboundTag'),{}); v=o.get('settings',{}).get('vnext',[{}])[0]
  for cl in clients:
-  rows.append({'port':i['port'],'uuid':cl['id'],'email':cl.get('email',''),'sni':r['serverNames'][0],'sid':r['shortIds'][0],'pbk':pub,'xhttp':s.get('xhttpSettings',{}),'exit':v.get('address','')})
+  rows.append({'port':i['port'],'uuid':cl['id'],'email':cl.get('email',''),'sni':r['serverNames'][0],'sid':r['shortIds'][0],'pbk':pub,'network':s['network'],'flow':cl.get('flow') or '','grpc':s.get('grpcSettings',{}).get('serviceName',''),'multi':bool(s.get('grpcSettings',{}).get('multiMode')),'xhttp':s.get('xhttpSettings',{}),'exit':v.get('address','')})
 print(json.dumps(rows))
 '''
+
+EXIT_PORTS={'108.61.222.91','149.28.240.154'}
+SKIP_PORTS={443}
+MODE_NAME={'xhttp':'XHTTP','tcp':'TCP','grpc':'gRPC'}
 
 def ssh_rows():
     target=ENV.get('SSH_TUNNEL_NL','root@'+ENV['SERVER_IP'])
@@ -32,9 +36,17 @@ def ssh_rows():
     return json.loads(r.stdout)
 
 def make_link(row):
-    p={'encryption':'none','security':'reality','sni':row['sni'],'fp':'chrome','pbk':row['pbk'],'sid':row['sid'],'type':'xhttp','path':row['xhttp'].get('path','/'),'mode':row['xhttp'].get('mode','auto')}
-    if row['xhttp'].get('host'): p['host']=row['xhttp']['host']
-    label=f"NL -> {row['exit']} XHTTP {row['email']}"
+    net=row['network']
+    p={'encryption':'none','security':'reality','sni':row['sni'],'fp':'chrome','pbk':row['pbk'],'sid':row['sid'],'type':net}
+    if net=='xhttp':
+        p.update({'path':row['xhttp'].get('path','/'),'mode':row['xhttp'].get('mode','auto')})
+        if row['xhttp'].get('host'): p['host']=row['xhttp']['host']
+    elif net=='tcp':
+        p['headerType']='none'
+        if row['flow']: p['flow']=row['flow']
+    else:
+        p.update({'serviceName':row['grpc'],'mode':'multi' if row['multi'] else 'gun'})
+    label=f"NL -> {row['exit']} {MODE_NAME[net]} {row['email']}"
     return f"vless://{row['uuid']}@{ENV['SERVER_IP']}:{row['port']}?{urlencode(p,quote_via=quote)}#{quote(label)}"
 
 def make_install_command(row, existing=False):
@@ -45,9 +57,13 @@ def make_install_command(row, existing=False):
         'PUBLIC_KEY': row['pbk'],
         'SHORT_ID': row['sid'],
         'REALITY_SERVER_NAME': row['sni'],
-        'XHTTP_PATH': row['xhttp'].get('path', '/dl'),
-        'XHTTP_MODE': row['xhttp'].get('mode', 'auto'),
+        'SERVER_NETWORK': row['network'],
     }
+    if row['network'] == 'xhttp':
+        settings['XHTTP_PATH'] = row['xhttp'].get('path', '/dl')
+        settings['XHTTP_MODE'] = row['xhttp'].get('mode', 'auto')
+    if row['network'] == 'grpc':
+        settings['GRPC_SERVICE_NAME'] = row['grpc']
     if existing:
         settings['ADMIN_SSH_TUNNEL'] = '1'
     arguments = ' '.join(shlex.quote(f'{key}={value}') for key, value in settings.items())
@@ -56,10 +72,32 @@ def make_install_command(row, existing=False):
     return (prefix + f'bash ./set-proxy-env.sh {arguments} && '
             f'bash ./install.sh {shlex.quote(str(row["exit"]))}')
 
+def make_block(row, link):
+    port, exit_ip, net = row['port'], row['exit'], row['network']
+    mode = {'xhttp': 'XHTTP + REALITY', 'tcp': 'TCP + REALITY (xtls-rprx-vision)', 'grpc': 'gRPC + REALITY'}[net]
+    return '\n'.join([
+        f'# NL:{port} -> USA {exit_ip} | режим: {mode} | клиент: {row["email"] or "без имени"}',
+        '# Установка, новый клиент (из домашнего каталога):',
+        make_install_command(row),
+        '# Установка, переключить эту WSL (только администратор, нужен SSH root к NL):',
+        make_install_command(row, existing=True),
+        '# Подключение:',
+        f'# 1. Выполните строку «новый клиент». При успехе установщик выводит выходной IP {exit_ip}.',
+        f'# 2. Проверка: curl -x http://127.0.0.1:7890 https://api.ipify.org должен вернуть {exit_ip}.',
+        f'# 3. Приложение (v2rayN, Streisand, Hiddify и др.): импорт ссылки ниже; протокол VLESS, транспорт {MODE_NAME[net]}, безопасность REALITY, порт {port}.',
+        f'# {link}',
+    ])
+
 def check(row):
     binary=Path('/home/dev/.local/bin/xray')
     if not binary.exists(): raise RuntimeError('Локальный Xray не найден')
-    cfg={'log':{'loglevel':'warning'},'inbounds':[{'listen':'127.0.0.1','port':18083,'protocol':'socks','settings':{}}],'outbounds':[{'protocol':'vless','settings':{'vnext':[{'address':ENV['SERVER_IP'],'port':row['port'],'users':[{'id':row['uuid'],'encryption':'none'}]}]},'streamSettings':{'network':'xhttp','security':'reality','xhttpSettings':row['xhttp'],'realitySettings':{'serverName':row['sni'],'fingerprint':'chrome','password':row['pbk'],'shortId':row['sid']}}}]}
+    net=row['network']
+    user={'id':row['uuid'],'encryption':'none'}
+    if row['flow']: user['flow']=row['flow']
+    stream={'network':net,'security':'reality','realitySettings':{'serverName':row['sni'],'fingerprint':'chrome','password':row['pbk'],'shortId':row['sid']}}
+    if net=='xhttp': stream['xhttpSettings']=row['xhttp']
+    if net=='grpc': stream['grpcSettings']={'serviceName':row['grpc']}
+    cfg={'log':{'loglevel':'warning'},'inbounds':[{'listen':'127.0.0.1','port':18083,'protocol':'socks','settings':{}}],'outbounds':[{'protocol':'vless','settings':{'vnext':[{'address':ENV['SERVER_IP'],'port':row['port'],'users':[user]}]},'streamSettings':stream}]}
     with tempfile.TemporaryDirectory() as d:
         c=Path(d)/'config.json'; c.write_text(json.dumps(cfg)); log=open(Path(d)/'xray.log','w')
         p=subprocess.Popen([str(binary),'run','-c',str(c)],stdout=log,stderr=log)
@@ -71,8 +109,11 @@ def check(row):
             p.terminate(); p.wait(timeout=5); log.close()
 
 def main():
-    rows=sorted(ssh_rows(),key=lambda x:x['port'])
-    if not rows: raise RuntimeError('На NL нет XHTTP + REALITY входов')
+    found=sorted(ssh_rows(),key=lambda x:x['port'])
+    rows=[x for x in found if x['exit'] in EXIT_PORTS and x['port'] not in SKIP_PORTS]
+    for x in found:
+        if x not in rows: print(f"Пропущен NL:{x['port']} ({x['network']}): выход {x['exit']}, не клиентский вход", file=sys.stderr)
+    if not rows: raise RuntimeError('На NL нет входов REALITY для USA1/USA2')
     links=[make_link(x) for x in rows]
     path=ROOT/'servers'/'vless-links-xhttp.txt'
     path.parent.mkdir(mode=0o700, exist_ok=True)
@@ -80,12 +121,7 @@ def main():
     commands_path=ROOT/'servers'/'client-install-commands.txt'
     commands_path.write_text(
         '# Скопируйте ОДНУ нужную строку; не запускайте весь файл. Содержит доступ к VPN.\n\n' +
-        '\n\n'.join(
-            f'# NL:{row["port"]} -> USA {row["exit"]}, новый клиент (из домашнего каталога)\n'
-            f'{make_install_command(row)}\n'
-            f'# NL:{row["port"]} -> USA {row["exit"]}, переключить эту WSL\n'
-            f'{make_install_command(row, existing=True)}'
-            for row in rows)+'\n')
+        '\n\n'.join(make_block(row, link) for row, link in zip(rows, links))+'\n')
     commands_path.chmod(0o600)
     for row,link in zip(rows,links):
         print(f"NL:{row['port']} -> USA:{row['exit']} {link}")

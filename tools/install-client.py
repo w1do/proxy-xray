@@ -78,18 +78,23 @@ def install_binaries(env):
 
 
 def profile_from_settings(env, requested):
-    expected_port = {'108.61.222.91': 2083, '149.28.240.154': 2087}[requested]
-    port = int(env.get('SERVER_PORT') or expected_port)
-    if port != expected_port:
-        raise RuntimeError(f'Для выхода {requested} нужен вход NL:{expected_port}, а указан порт {port}')
-    if env.get('SERVER_NETWORK', 'xhttp') != 'xhttp':
-        raise RuntimeError('Для текущих серверов SERVER_NETWORK должен быть xhttp')
+    allowed_ports = {'108.61.222.91': {2083, 2084, 2085, 2086}, '149.28.240.154': {2087}}[requested]
+    port = int(env.get('SERVER_PORT') or min(allowed_ports))
+    if port not in allowed_ports:
+        raise RuntimeError(f'Для выхода {requested} нужен вход NL:{"/".join(str(p) for p in sorted(allowed_ports))}, а указан порт {port}')
+    network = env.get('SERVER_NETWORK', 'xhttp')
+    if network not in ('xhttp', 'tcp', 'grpc'):
+        raise RuntimeError('SERVER_NETWORK должен быть xhttp, tcp или grpc')
+    if network == 'grpc' and not env.get('GRPC_SERVICE_NAME'):
+        raise RuntimeError('Для SERVER_NETWORK=grpc нужен GRPC_SERVICE_NAME в proxy.env')
     for key in ('SERVER_IP', 'UUID', 'PUBLIC_KEY', 'SHORT_ID'):
         if not env.get(key):
             raise RuntimeError(f'В proxy.env отсутствует {key}')
     return {'port': port, 'uuid': env['UUID'],
             'sni': env.get('REALITY_SERVER_NAME', 'dl.google.com'),
             'sid': env['SHORT_ID'], 'pbk': env['PUBLIC_KEY'],
+            'network': network,
+            'grpc_service': env.get('GRPC_SERVICE_NAME', ''),
             'xhttp': {'path': env.get('XHTTP_PATH', '/dl'),
                       'mode': env.get('XHTTP_MODE', 'auto')},
             'exit': requested}
@@ -103,9 +108,10 @@ def xray_config(env, row):
             'outbounds': [{'protocol': 'vless',
                            'settings': {'vnext': [{'address': '127.0.0.1' if admin_tunnel else env['SERVER_IP'],
                                                   'port': 22000 if admin_tunnel else row['port'],
-                                                  'users': [{'id': row['uuid'], 'encryption': 'none'}]}]},
-                           'streamSettings': {'network': 'xhttp', 'security': 'reality',
-                                              'xhttpSettings': row['xhttp'],
+                                                  'users': [{'id': row['uuid'], 'encryption': 'none', **({'flow': 'xtls-rprx-vision'} if row['network'] == 'tcp' else {})}]}]},
+                           'streamSettings': {'network': row['network'], 'security': 'reality',
+                                              **({'xhttpSettings': row['xhttp']} if row['network'] == 'xhttp' else {}),
+                                              **({'grpcSettings': {'serviceName': row['grpc_service']}} if row['network'] == 'grpc' else {}),
                                               'realitySettings': {'serverName': row['sni'],
                                                                   'fingerprint': env.get('CLIENT_FINGERPRINT', 'firefox'),
                                                                   'password': row['pbk'],

@@ -44,6 +44,7 @@ PROXY_PORT="${PROXY_PORT:-7890}"
 SERVER_PORT="${SERVER_PORT:-443}"
 XHTTP_PATH="${XHTTP_PATH:-}"
 XHTTP_MODE="${XHTTP_MODE:-auto}"
+GRPC_SERVICE_NAME="${GRPC_SERVICE_NAME:-}"
 if [ -z "${SERVER_NETWORK:-}" ]; then
   if [ -n "$XHTTP_PATH" ]; then SERVER_NETWORK="xhttp"; else SERVER_NETWORK="tcp"; fi
 fi
@@ -59,7 +60,14 @@ case "$SERVER_NETWORK" in
     NETWORK_BLOCK="    network: tcp"
     FLOW_BLOCK="    flow: xtls-rprx-vision"
     ;;
-  *) echo "Unsupported SERVER_NETWORK: $SERVER_NETWORK (use tcp or xhttp)" >&2; exit 2 ;;
+  grpc)
+    [ -n "$GRPC_SERVICE_NAME" ] || { echo "SERVER_NETWORK=grpc requires GRPC_SERVICE_NAME in proxy.env" >&2; exit 2; }
+    NETWORK_BLOCK="    network: grpc
+    grpc-opts:
+      grpc-service-name: ${GRPC_SERVICE_NAME}"
+    FLOW_BLOCK=""
+    ;;
+  *) echo "Unsupported SERVER_NETWORK: $SERVER_NETWORK (use tcp, xhttp or grpc)" >&2; exit 2 ;;
 esac
 # chrome sends a large post-quantum ClientHello that gets dropped on some networks
 CLIENT_FINGERPRINT="${CLIENT_FINGERPRINT:-firefox}"
