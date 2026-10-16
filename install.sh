@@ -41,6 +41,26 @@ PUBLIC_KEY="${PUBLIC_KEY:-}"
 SHORT_ID="${SHORT_ID:-}"
 REALITY_SERVER_NAME="${REALITY_SERVER_NAME:-dl.google.com}"
 PROXY_PORT="${PROXY_PORT:-7890}"
+SERVER_PORT="${SERVER_PORT:-443}"
+XHTTP_PATH="${XHTTP_PATH:-}"
+XHTTP_MODE="${XHTTP_MODE:-auto}"
+if [ -z "${SERVER_NETWORK:-}" ]; then
+  if [ -n "$XHTTP_PATH" ]; then SERVER_NETWORK="xhttp"; else SERVER_NETWORK="tcp"; fi
+fi
+case "$SERVER_NETWORK" in
+  xhttp)
+    NETWORK_BLOCK="    network: xhttp
+    xhttp-opts:
+      path: ${XHTTP_PATH:-/}
+      mode: ${XHTTP_MODE}"
+    FLOW_BLOCK=""
+    ;;
+  tcp)
+    NETWORK_BLOCK="    network: tcp"
+    FLOW_BLOCK="    flow: xtls-rprx-vision"
+    ;;
+  *) echo "Unsupported SERVER_NETWORK: $SERVER_NETWORK (use tcp or xhttp)" >&2; exit 2 ;;
+esac
 # chrome sends a large post-quantum ClientHello that gets dropped on some networks
 CLIENT_FINGERPRINT="${CLIENT_FINGERPRINT:-firefox}"
 RU_SERVER_IP="${RU_SERVER_IP:-}"
@@ -337,14 +357,14 @@ proxies:
   - name: USA
     type: vless
     server: ${SERVER_IP}
-    port: 443
+    port: ${SERVER_PORT}
     uuid: ${UUID}
     encryption: ""
-    network: tcp
+${NETWORK_BLOCK}
     tls: true
     skip-cert-verify: true
     udp: true
-    flow: xtls-rprx-vision
+${FLOW_BLOCK}
     packet-encoding: xudp
     servername: ${REALITY_SERVER_NAME}
     client-fingerprint: ${CLIENT_FINGERPRINT}
