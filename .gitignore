@@ -11,6 +11,8 @@ bin/.git/
 server/xray-config.json
 servers/xray-nl-config.json
 servers/xray-usa-config.json
+servers/vless-links-xhttp.txt
+servers/client-install-commands.txt
 /graphify-out/
 .memory/*
 !.memory/annotations.json

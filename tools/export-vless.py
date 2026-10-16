@@ -1,4 +1,4 @@
-import json, os, subprocess, sys, tempfile, time
+import json, os, shlex, subprocess, sys, tempfile, time
 from pathlib import Path
 from urllib.parse import quote, urlencode, urlsplit
 
@@ -37,6 +37,23 @@ def make_link(row):
     label=f"NL -> {row['exit']} XHTTP {row['email']}"
     return f"vless://{row['uuid']}@{ENV['SERVER_IP']}:{row['port']}?{urlencode(p,quote_via=quote)}#{quote(label)}"
 
+def make_install_command(row, existing=False):
+    settings = {
+        'SERVER_IP': ENV['SERVER_IP'],
+        'SERVER_PORT': row['port'],
+        'UUID': row['uuid'],
+        'PUBLIC_KEY': row['pbk'],
+        'SHORT_ID': row['sid'],
+        'REALITY_SERVER_NAME': row['sni'],
+        'XHTTP_PATH': row['xhttp'].get('path', '/dl'),
+        'XHTTP_MODE': row['xhttp'].get('mode', 'auto'),
+    }
+    arguments = ' '.join(shlex.quote(f'{key}={value}') for key, value in settings.items())
+    prefix = (f'cd {shlex.quote(str(ROOT))} && ' if existing else
+              'git clone https://github.com/w1do/proxy-xray.git proxy && cd proxy && ')
+    return (prefix + f'bash ./set-proxy-env.sh {arguments} && '
+            f'bash ./install.sh {shlex.quote(str(row["exit"]))}')
+
 def check(row):
     binary=Path('/home/dev/.local/bin/xray')
     if not binary.exists(): raise RuntimeError('Локальный Xray не найден')
@@ -58,6 +75,16 @@ def main():
     path=ROOT/'servers'/'vless-links-xhttp.txt'
     path.parent.mkdir(mode=0o700, exist_ok=True)
     path.write_text('\n'.join(links)+'\n'); path.chmod(0o600)
+    commands_path=ROOT/'servers'/'client-install-commands.txt'
+    commands_path.write_text(
+        '# Скопируйте ОДНУ нужную строку; не запускайте весь файл. Содержит доступ к VPN.\n\n' +
+        '\n\n'.join(
+            f'# NL:{row["port"]} -> USA {row["exit"]}, новый клиент (из домашнего каталога)\n'
+            f'{make_install_command(row)}\n'
+            f'# NL:{row["port"]} -> USA {row["exit"]}, переключить эту WSL\n'
+            f'{make_install_command(row, existing=True)}'
+            for row in rows)+'\n')
+    commands_path.chmod(0o600)
     for row,link in zip(rows,links):
         print(f"NL:{row['port']} -> USA:{row['exit']} {link}")
     if '--check' in sys.argv:
@@ -65,6 +92,7 @@ def main():
             ok,seen=check(row); print(f"check {row['port']}: {'OK '+seen if ok else 'FAILED '+seen}")
             if not ok: return 1
     print(f'Saved: {path}')
+    print(f'Saved: {commands_path}')
     return 0
 
 try: raise SystemExit(main())
