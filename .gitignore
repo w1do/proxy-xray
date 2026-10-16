@@ -4,6 +4,7 @@
 proxy.env
 proxy.env.local
 proxy.env.usa-backup
+proxy.env.bak
 .idea/
 bin/.git/
 .env
