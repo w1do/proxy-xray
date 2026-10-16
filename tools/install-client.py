@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Install the WSL proxy with official Xray for Reality/XHTTP transport."""
 import json
+import gzip
+import hashlib
 import os
 from pathlib import Path
+import platform
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -26,7 +30,8 @@ def run(args, **kwargs):
 def check(args, message, **kwargs):
     result = run(args, **kwargs)
     if result.returncode:
-        raise RuntimeError(f'{message}: {result.stderr.strip()[-500:]}')
+        detail = (result.stderr + '\n' + result.stdout).strip()[-800:]
+        raise RuntimeError(f'{message}: {detail}')
     return result.stdout.strip()
 
 
@@ -39,30 +44,54 @@ def settings():
     return values
 
 
-REMOTE = r'''import json, subprocess
-c=json.load(open('/usr/local/x-ui/bin/config.json'))
-out={o.get('tag'):o for o in c.get('outbounds',[])}
-rows=[]
-for i in c.get('inbounds',[]):
- s=i.get('streamSettings',{})
- if s.get('network')!='xhttp' or s.get('security')!='reality': continue
- r=s['realitySettings']; k=subprocess.run(['/usr/local/x-ui/bin/xray-linux-amd64','x25519','-i',r['privateKey']],capture_output=True,text=True,check=True).stdout
- pub=next(x.split(':',1)[1].strip() for x in k.splitlines() if x.lower().startswith(('password','public')))
- route=next((x for x in c.get('routing',{}).get('rules',[]) if i.get('tag') in x.get('inboundTag',[])),{})
- v=out.get(route.get('outboundTag'),{}).get('settings',{}).get('vnext',[{}])[0]
- for cl in i.get('settings',{}).get('clients',[]):
-  rows.append({'port':i['port'],'uuid':cl['id'],'sni':r['serverNames'][0],'sid':r['shortIds'][0],'pbk':pub,'xhttp':s.get('xhttpSettings',{}),'exit':v.get('address','')})
-print(json.dumps(rows))'''
+def install_binaries(env):
+    if platform.machine() != 'x86_64':
+        raise RuntimeError('Этот установщик поддерживает Linux x86_64; бинарники для другой архитектуры не подготовлены')
+    XRAY.parent.mkdir(parents=True, exist_ok=True)
+    bundles = [(MIHOMO, ROOT / 'bin/mihomo-linux-amd64-compatible-v1.19.32.gz',
+                'ba3ce607747a07f948fc35780e108a4a7c7f552a38b9bd4d115f313ebcb89c20',
+                ['-v'], 'Mihomo Meta v1.19.32 '),
+               (XRAY, ROOT / 'bin/xray-linux-amd64-v26.10.10.gz',
+                'd285610cb2f9cce29944f19e51dde690ec261e4d300f637a79086a24d108421b',
+                ['version'], 'Xray 26.10.10 ')]
+    for binary, archive, expected_hash, version_args, expected_version in bundles:
+        if binary.is_file() and run([str(binary), *version_args]).stdout.startswith(expected_version):
+            continue
+        if not archive.is_file():
+            raise RuntimeError(f'В клоне отсутствует {archive.relative_to(ROOT)}')
+        if hashlib.sha256(archive.read_bytes()).hexdigest() != expected_hash:
+            raise RuntimeError(f'Контрольная сумма архива {binary.name} не совпала')
+        with tempfile.NamedTemporaryFile(dir=XRAY.parent, delete=False) as handle:
+            temporary = Path(handle.name)
+        try:
+            with gzip.open(archive, 'rb') as source, temporary.open('wb') as target:
+                shutil.copyfileobj(source, target)
+            temporary.chmod(0o755)
+            installed_version = check([str(temporary), *version_args], f'{binary.name} не запускается')
+            if not installed_version.startswith(expected_version):
+                raise RuntimeError(f'Неверная версия {binary.name} в архиве')
+            temporary.replace(binary)
+        finally:
+            temporary.unlink(missing_ok=True)
+        print(f'{binary.name} установлен из архива репозитория')
 
 
-def remote_profiles(env):
-    target = env.get('SSH_TUNNEL_NL', 'root@' + env['SERVER_IP'])
-    result = run(['ssh', '-F', '/dev/null', '-o', 'BatchMode=yes',
-                  '-o', 'ConnectTimeout=10', target, 'python3', '-'],
-                 input=REMOTE, timeout=35)
-    if result.returncode:
-        raise RuntimeError('Не удалось прочитать текущую конфигурацию NL по SSH')
-    return json.loads(result.stdout)
+def profile_from_settings(env, requested):
+    expected_port = {'108.61.222.91': 2083, '149.28.240.154': 2087}[requested]
+    port = int(env.get('SERVER_PORT') or expected_port)
+    if port != expected_port:
+        raise RuntimeError(f'Для выхода {requested} нужен вход NL:{expected_port}, а указан порт {port}')
+    if env.get('SERVER_NETWORK', 'xhttp') != 'xhttp':
+        raise RuntimeError('Для текущих серверов SERVER_NETWORK должен быть xhttp')
+    for key in ('SERVER_IP', 'UUID', 'PUBLIC_KEY', 'SHORT_ID'):
+        if not env.get(key):
+            raise RuntimeError(f'В proxy.env отсутствует {key}')
+    return {'port': port, 'uuid': env['UUID'],
+            'sni': env.get('REALITY_SERVER_NAME', 'dl.google.com'),
+            'sid': env['SHORT_ID'], 'pbk': env['PUBLIC_KEY'],
+            'xhttp': {'path': env.get('XHTTP_PATH', '/dl'),
+                      'mode': env.get('XHTTP_MODE', 'auto')},
+            'exit': requested}
 
 
 def xray_config(env, row):
@@ -104,8 +133,14 @@ proxy-groups:
     proxies:
       - USA
 rules:
-  - GEOIP,PRIVATE,DIRECT,no-resolve
+  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - DOMAIN-SUFFIX,local,DIRECT
+  - DOMAIN-SUFFIX,localhost,DIRECT
   - DOMAIN-SUFFIX,ru,DIRECT
+  - DOMAIN-SUFFIX,рф,DIRECT
   - MATCH,PROXY
 '''
 
@@ -170,12 +205,8 @@ def main():
     requested = sys.argv[1] if len(sys.argv) > 1 else '149.28.240.154'
     if requested not in ('149.28.240.154', '108.61.222.91'):
         raise RuntimeError('Укажите IP USA2 149.28.240.154 или USA1 108.61.222.91')
-    if not XRAY.exists() or not MIHOMO.exists():
-        raise RuntimeError('Нужны локальные Xray и Mihomo в ~/.local/bin')
-    rows = remote_profiles(env)
-    row = next((r for r in rows if r['exit'] == requested), None)
-    if row is None:
-        raise RuntimeError('На NL не найден XHTTP-маршрут к ' + requested)
+    row = profile_from_settings(env, requested)
+    install_binaries(env)
     config = xray_config(env, row)
     yaml = mihomo_config()
     with tempfile.TemporaryDirectory() as directory:
