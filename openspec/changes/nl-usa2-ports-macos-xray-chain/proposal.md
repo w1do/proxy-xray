@@ -1,5 +1,7 @@
 # nl-usa2-ports-macos-xray-chain
 
+> Status: SUPERSEDED by openspec/changes/local-web-ui (Docker-only). Not implemented further.
+
 ## Open questions (non-blocking; defaults below are applied unless the user overrides)
 
 1. **Xray for macOS: ship zips in `bin/` or download?** Default in this spec: download the pinned

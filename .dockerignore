@@ -1,0 +1,6 @@
+*
+!ui/
+!web/
+ui/**/__pycache__
+web/node_modules
+web/dist

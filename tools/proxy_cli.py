@@ -80,7 +80,7 @@ def logs(args):
 
 
 def check(_args):
-    return subprocess.run(['bash', str(ROOT / 'vless.sh'), '--check']).returncode
+    return subprocess.run(['docker', 'compose', 'exec', '-T', 'kit', 'kit', 'check'], cwd=str(ROOT)).returncode
 
 
 def main(argv=None):
@@ -91,7 +91,7 @@ def main(argv=None):
     p_logs.add_argument('servers', nargs='*', default=['all'], help='nl usa1 usa2 или all')
     p_logs.add_argument('-n', '--lines', type=int, default=50)
     p_logs.set_defaults(func=logs)
-    sub.add_parser('check', help='проверить XHTTP-входы из WSL (vless.sh --check)').set_defaults(func=check)
+    sub.add_parser('check', help='проверить входы NL из контейнера (kit check)').set_defaults(func=check)
     p_update = sub.add_parser('update', help='обновить Xray на серверах до указанной версии')
     p_update.add_argument('version', help='например 26.10.10')
     p_update.add_argument('servers', nargs='*', default=['all'], help='nl usa1 usa2 или all')

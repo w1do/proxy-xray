@@ -6,13 +6,21 @@ proxy.env.local
 proxy.env.usa-backup
 proxy.env.bak
 .idea/
-bin/.git/
 .env
 server/xray-config.json
-servers/xray-nl-config.json
-servers/xray-usa-config.json
-servers/vless-links-xhttp.txt
-servers/client-install-commands.txt
+servers/*
+!servers/README.md
 /graphify-out/
 .memory/*
 !.memory/annotations.json
+
+# Docker-only kit
+.env
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+__pycache__/
+web/node_modules/
+web/dist/
