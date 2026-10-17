@@ -5,16 +5,7 @@ import { Badge } from './ui/badge.jsx';
 import { Button } from './ui/button.jsx';
 import { Card, CardContent } from './ui/card.jsx';
 
-const DOWN_COMMANDS = [
-  '# Linux / WSL',
-  'systemctl --user disable --now mihomo.service xray-mihomo.service xhttp-nl-admin-tunnel.service',
-  "ss -ltnp 'sport = :7890'",
-  '# macOS',
-  'for L in com.mihomo.proxy com.mihomo.xray; do launchctl bootout "gui/$(id -u)/$L" 2>/dev/null || true; launchctl disable "gui/$(id -u)/$L"; done',
-  'lsof -nP -iTCP:7890 -sTCP:LISTEN',
-  '# затем в каталоге проекта',
-  'docker compose up -d',
-].join('\n');
+
 
 const STATE_TEXT = { running: 'работает', idle: 'ожидает настройки', failed: 'ошибка', down: 'не работает' };
 const STATE_VARIANT = { running: 'success', idle: 'secondary', failed: 'destructive', down: 'destructive' };
@@ -54,10 +45,9 @@ export default function StatusBar({ proxy, active, exits, busy }) {
             <AlertTitle>Прокси-контейнер не работает</AlertTitle>
             <AlertDescription>
               <p>
-                Чаще всего порт 7890 на хосте занят старой установкой Mihomo. UI ничего не останавливает сам: выполните команды
-                ниже, затем <code>docker compose up -d</code>.
+                Чаще всего порт 7890 занят старой установкой на хосте. UI ничего не останавливает сам. Одноразовый переход
+                описан в README, раздел 8 «Переход с установки на хосте». После него выполните <code>docker compose up -d</code>.
               </p>
-              <pre className="mt-2 overflow-x-auto rounded-md bg-muted p-2 text-xs text-foreground">{DOWN_COMMANDS}</pre>
             </AlertDescription>
           </Alert>
         )}

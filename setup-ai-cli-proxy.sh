@@ -1,26 +1,18 @@
 #!/usr/bin/env bash
-# Route AI coding CLIs (Claude Code, Codex) through the local Mihomo proxy.
+# Route AI coding CLIs (Claude Code, Codex) through the local proxy of the Docker kit.
 #
-# Terminal sessions inherit the proxy from ~/.bashrc / ~/.zshrc, but tools that
-# are started outside a shell (IDE extensions, background daemons) do not. This
-# script pins the proxy in their own settings so the NL -> USA chain is used
-# regardless of how they are launched. It is idempotent.
+# The proxy is the kit's `proxy` container, published on 127.0.0.1:7890 (override the host port with
+# KIT_PROXY_PORT in the kit's .env, then pass it here as PROXY_PORT). It must be running:
+#   docker compose up -d        (in the project directory)
+#
+# Terminal sessions inherit the proxy from ~/.bashrc / ~/.zshrc, but tools that are started outside a shell
+# (IDE extensions, background daemons) do not. This script pins the proxy in their own settings so the traffic
+# goes through the kit regardless of how they are launched. It is idempotent.
 #
 # Usage: bash ./setup-ai-cli-proxy.sh
-# Set AI_CLI_PROXY=0 to leave the CLI configs untouched (install.sh passes it through).
+# Set AI_CLI_PROXY=0 to leave the CLI configs untouched.
+# This script reads only the environment (PROXY_PORT, AI_CLI_PROXY); it does not read proxy.env.
 set -euo pipefail
-
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-ENV_FILE="$SCRIPT_DIR/proxy.env"
-FALLBACK_ENV_FILE="$SCRIPT_DIR/.env"
-
-if [ -f "$ENV_FILE" ]; then
-  # shellcheck disable=SC1090
-  . "$ENV_FILE"
-elif [ -f "$FALLBACK_ENV_FILE" ]; then
-  # shellcheck disable=SC1090
-  . "$FALLBACK_ENV_FILE"
-fi
 
 PROXY_PORT="${PROXY_PORT:-7890}"
 PROXY_URL="http://127.0.0.1:${PROXY_PORT}"
