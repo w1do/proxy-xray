@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-KIT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# Resolve the real path first, so the command works through a symlink (~/.local/bin/proxy) from any folder.
+SELF="$(readlink -f -- "${BASH_SOURCE[0]}")"
+KIT_ROOT="$(cd -- "$(dirname -- "$SELF")" && pwd -P)"
 export KIT_ROOT
 exec python3 "$KIT_ROOT/tools/proxy_cli.py" "$@"

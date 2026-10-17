@@ -46,6 +46,9 @@
 (для zsh — `source ~/.zshrc`). Отключить: `./proxy env off`. Команда меняет только свой блок в файле оболочки.
 Подробности — в [docs/guide.md](docs/guide.md), раздел 8.
 
+Команда `proxy` работает из любой папки. Один раз выполните `bash install-cli.sh`, затем, например, `proxy status`.
+Подробности — в [docs/guide.md](docs/guide.md), раздел 10.
+
 ## 4. Первое подключение
 
 Для шагов 2–4 нужен ключ NL. Задайте его в файле `.env` (см. [docs/guide.md](docs/guide.md)).
