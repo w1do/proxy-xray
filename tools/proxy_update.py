@@ -55,7 +55,7 @@ def update(args, run_remote, selected):
         raise RuntimeError('Версия должна быть в виде 26.10.10')
     nodes = selected(args.servers)
     print(f'Обновление Xray до {args.version}: серверы {", ".join(nodes)}.')
-    print('Порядок: по одному; после каждого — проверка vless.sh --check, при провале откат узла и остановка.')
+    print('Порядок: по одному; после каждого — проверка docker compose exec -T kit kit check, при провале откат узла и остановка.')
     if not args.yes and input('Продолжить? Введи yes: ').strip().lower() != 'yes':
         print('Отменено; ничего не изменено.')
         return 1
@@ -74,7 +74,7 @@ def update(args, run_remote, selected):
             print(f'{node}: версия не совпала с {args.version}; откат на {old}.')
             run_remote(node, rollback_script(node, old), timeout=900)
             return 2
-        if subprocess.run(['bash', str(ROOT / 'vless.sh'), '--check']).returncode != 0:
+        if subprocess.run(['docker', 'compose', 'exec', '-T', 'kit', 'kit', 'check'], cwd=str(ROOT)).returncode != 0:
             print(f'{node}: проверка XHTTP не прошла; откат на {old}.')
             run_remote(node, rollback_script(node, old), timeout=900)
             return 2

@@ -1,4 +1,11 @@
-"""Единая команда `proxy`: статус, логи, проверка и обновление Xray на всех серверах."""
+"""Команда `proxy`.
+
+Клиент (Docker): `status`, `logs`, `check` работают только через `docker compose` в корне проекта.
+Никакого ssh, systemctl или файлов на хосте.
+
+Администрирование серверов: `server status`, `server logs`, `server update`. Они ходят по ssh на NL/USA
+по адресам из proxy.env (только для администратора серверов, не для клиента).
+"""
 import argparse
 import os
 from pathlib import Path
@@ -9,8 +16,38 @@ ROOT = Path(os.environ['KIT_ROOT'])
 SSH = ['ssh', '-F', '/dev/null', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=12',
        '-o', 'StrictHostKeyChecking=yes']
 NODES = ['nl', 'usa1', 'usa2']
-XRAY_BIN = {'nl': '/usr/local/x-ui/bin/xray-linux-amd64', 'usa1': 'xray', 'usa2': 'xray'}
+SERVICES = ['kit', 'proxy']
 
+
+def run(argv):
+    """Единственная точка запуска внешних команд: тесты подменяют эту функцию."""
+    return subprocess.run(argv, cwd=str(ROOT)).returncode
+
+
+def compose(*args):
+    return run(['docker', 'compose', *args])
+
+
+# ---- клиент: только Docker -------------------------------------------------------------------
+
+def client_status(_args):
+    code = compose('ps')
+    return max(code, compose('exec', '-T', 'kit', 'kit', 'status'))
+
+
+def client_logs(args):
+    services = SERVICES if args.service == 'all' else [args.service]
+    code = 0
+    for service in services:
+        code = max(code, compose('logs', '--tail', str(args.lines), service))
+    return code
+
+
+def client_check(_args):
+    return compose('exec', '-T', 'kit', 'kit', 'check')
+
+
+# ---- администрирование серверов: ssh по proxy.env --------------------------------------------
 
 def read_env(path):
     values = {}
@@ -31,7 +68,7 @@ def targets():
 
 
 def run_remote(node, script, timeout=120):
-    """Выполнить python3-скрипт на узле; USA идут через NL (ProxyJump)."""
+    """Выполнить bash-скрипт на узле; USA идут через NL (ProxyJump)."""
     nl, usa = targets()
     host = nl['nl'] if node == 'nl' else usa[node]
     if not host:
@@ -51,10 +88,12 @@ def selected(names):
     return names
 
 
-def status(_args):
+def server_status(_args):
+    # Версия Xray на NL — бинарник 3x-ui; на USA — системный xray.
+    xray_bin = {'nl': '/usr/local/x-ui/bin/xray-linux-amd64', 'usa1': 'xray', 'usa2': 'xray'}
     for node in NODES:
         script = (f"echo ACTIVE=$(systemctl is-active {'x-ui' if node == 'nl' else 'xray'} 2>/dev/null)\n"
-                  f"echo VERSION=$({XRAY_BIN[node]} version 2>/dev/null | head -1)")
+                  f"echo VERSION=$({xray_bin[node]} version 2>/dev/null | head -1)")
         try:
             code, out, _ = run_remote(node, script, timeout=60)
         except (RuntimeError, subprocess.SubprocessError) as exc:
@@ -65,7 +104,7 @@ def status(_args):
     return 0
 
 
-def logs(args):
+def server_logs(args):
     lines = str(args.lines)
     for node in selected(args.servers):
         unit = 'x-ui' if node == 'nl' else 'xray'
@@ -79,27 +118,44 @@ def logs(args):
     return 0
 
 
-def check(_args):
-    return subprocess.run(['docker', 'compose', 'exec', '-T', 'kit', 'kit', 'check'], cwd=str(ROOT)).returncode
+def server_update(args):
+    from proxy_update import update
+    return update(args, run_remote, selected)
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(prog='proxy', description='Управление прокси NL → USA')
+# ---- разбор аргументов -----------------------------------------------------------------------
+
+def build_parser():
+    parser = argparse.ArgumentParser(prog='proxy', description='Прокси-клиент в Docker и администрирование серверов')
     sub = parser.add_subparsers(dest='command', required=True)
-    sub.add_parser('status', help='версия Xray и состояние служб на всех серверах').set_defaults(func=status)
-    p_logs = sub.add_parser('logs', help='журналы серверов')
-    p_logs.add_argument('servers', nargs='*', default=['all'], help='nl usa1 usa2 или all')
-    p_logs.add_argument('-n', '--lines', type=int, default=50)
-    p_logs.set_defaults(func=logs)
-    sub.add_parser('check', help='проверить входы NL из контейнера (kit check)').set_defaults(func=check)
-    p_update = sub.add_parser('update', help='обновить Xray на серверах до указанной версии')
+
+    sub.add_parser('status', help='состояние контейнеров kit и proxy и состояние клиента').set_defaults(func=client_status)
+
+    p_logs = sub.add_parser('logs', help='журналы контейнеров')
+    p_logs.add_argument('service', nargs='?', default='all', choices=SERVICES + ['all'],
+                        help='kit, proxy или all (по умолчанию all)')
+    p_logs.add_argument('-n', '--lines', type=int, default=50, help='сколько последних строк')
+    p_logs.set_defaults(func=client_logs)
+
+    sub.add_parser('check', help='проверить входы NL из контейнера (kit check)').set_defaults(func=client_check)
+
+    p_server = sub.add_parser('server', help='администрирование серверов NL/USA по ssh (только для администратора)')
+    srv = p_server.add_subparsers(dest='server_command', required=True)
+    srv.add_parser('status', help='версия Xray и служба на серверах').set_defaults(func=server_status)
+    p_slogs = srv.add_parser('logs', help='журналы служб на серверах')
+    p_slogs.add_argument('servers', nargs='*', default=['all'], help='nl usa1 usa2 или all')
+    p_slogs.add_argument('-n', '--lines', type=int, default=50)
+    p_slogs.set_defaults(func=server_logs)
+    p_update = srv.add_parser('update', help='обновить Xray на серверах до указанной версии')
     p_update.add_argument('version', help='например 26.10.10')
     p_update.add_argument('servers', nargs='*', default=['all'], help='nl usa1 usa2 или all')
     p_update.add_argument('--yes', action='store_true', help='не спрашивать подтверждение')
-    args = parser.parse_args(argv)
-    if args.command == 'update':
-        from proxy_update import update
-        return update(args, run_remote, selected)
+    p_update.set_defaults(func=server_update)
+    return parser
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
     return args.func(args)
 
 
