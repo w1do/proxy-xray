@@ -1,4 +1,4 @@
-import importlib, os, sys, unittest
+import contextlib, importlib, io, os, stat, sys, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -89,6 +89,123 @@ class ServerCommandTests(unittest.TestCase):
     def test_server_logs_rejects_unknown_node(self):
         with self.assertRaises(RuntimeError):
             proxy_cli.selected(['bogus'])
+
+
+class ProxyEnvTests(unittest.TestCase):
+    BEGIN = '# >>> mihomo-proxy-kit >>>'
+    END = '# <<< mihomo-proxy-kit <<<'
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name)
+        self.env = dict(os.environ)
+        os.environ['HOME'] = str(self.home)
+        os.environ['SHELL'] = '/bin/bash'
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self.env)
+        self.tmp.cleanup()
+
+    def run_cli(self, *argv):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = proxy_cli.main(['env', *argv])
+        return code, out.getvalue()
+
+    def test_on_creates_block_once(self):
+        rc = self.home / '.bashrc'
+        self.assertEqual(self.run_cli('on')[0], 0)
+        self.assertEqual(rc.read_text().count(self.BEGIN), 1)
+        self.run_cli('on')
+        text = rc.read_text()
+        self.assertEqual(text.count(self.BEGIN), 1)
+        self.assertEqual(text.count(self.END), 1)
+        self.assertIn('export http_proxy=http://127.0.0.1:7890\n', text)
+        self.assertIn('export no_proxy=localhost,127.0.0.1,::1\n', text)
+
+    def test_on_replaces_block_in_place_with_new_port(self):
+        rc = self.home / '.bashrc'
+        rc.write_text('before\n')
+        self.run_cli('on')
+        self.run_cli('on', '--port', '7891')
+        text = rc.read_text()
+        self.assertEqual(text.count(self.BEGIN), 1)
+        self.assertIn('http://127.0.0.1:7891', text)
+        self.assertNotIn('7890', text)
+        self.assertTrue(text.startswith('before\n'))
+
+    def test_off_removes_only_the_block_and_keeps_other_lines_byte_identical(self):
+        rc = self.home / '.bashrc'
+        prefix = 'alias ll="ls -la"\r\nexport EDITOR=vim  # комментарий\n'
+        suffix = '\nexport PATH="$HOME/bin:$PATH"'
+        rc.write_bytes((prefix + '# >>> mihomo-proxy-kit >>>\nexport x=1\n# <<< mihomo-proxy-kit <<<\n' + suffix).encode('utf-8'))
+        code, out = self.run_cli('off')
+        self.assertEqual(code, 0)
+        self.assertEqual(rc.read_bytes(), (prefix + suffix).encode('utf-8'))
+
+    def test_off_without_block_changes_nothing(self):
+        rc = self.home / '.bashrc'
+        original = b'export A=1\n'
+        rc.write_bytes(original)
+        code, out = self.run_cli('off')
+        self.assertEqual(code, 0)
+        self.assertIn('Блока proxy', out)
+        self.assertEqual(rc.read_bytes(), original)
+
+    def test_block_without_end_marker_is_refused(self):
+        rc = self.home / '.bashrc'
+        original = (self.BEGIN + '\nexport A=1\n').encode('utf-8')
+        rc.write_bytes(original)
+        with self.assertRaises(RuntimeError):
+            self.run_cli('on')
+        self.assertEqual(rc.read_bytes(), original)
+
+    def test_symlinked_rc_is_refused_and_real_file_unchanged(self):
+        real = self.home / 'dotfiles-real-rc'
+        real.write_text('export A=1\n')
+        rc = self.home / '.bashrc'
+        os.symlink(real, rc)
+        with self.assertRaises(RuntimeError) as ctx:
+            self.run_cli('on')
+        self.assertIn(str(real), str(ctx.exception))
+        self.assertTrue(rc.is_symlink())
+        self.assertEqual(real.read_text(), 'export A=1\n')
+
+    def test_zsh_vs_bash_target_selection(self):
+        os.environ['SHELL'] = '/bin/zsh'
+        self.run_cli('on')
+        self.assertTrue((self.home / '.zshrc').exists())
+        self.assertFalse((self.home / '.bashrc').exists())
+        os.environ['SHELL'] = '/bin/bash'
+        self.run_cli('on', '--shell', 'bash')
+        self.assertTrue((self.home / '.bashrc').exists())
+        self.assertIn('.bashrc', self.run_cli('status', '--shell', 'bash')[1])
+
+    def test_status_outputs(self):
+        self.assertIn('нет', self.run_cli('status')[1])
+        self.run_cli('on')
+        self.assertIn('есть', self.run_cli('status')[1])
+        self.run_cli('off')
+        self.assertIn('нет', self.run_cli('status')[1])
+
+    def test_mode_is_kept(self):
+        rc = self.home / '.bashrc'
+        rc.write_text('export A=1\n')
+        os.chmod(rc, 0o600)
+        self.run_cli('on')
+        self.assertEqual(stat.S_IMODE(os.stat(rc).st_mode), 0o600)
+
+    def test_port_range_is_checked(self):
+        with self.assertRaises(RuntimeError):
+            self.run_cli('on', '--port', '70000')
+
+    def test_env_commands_never_run_docker_or_ssh(self):
+        with mock.patch.object(proxy_cli, 'run', side_effect=AssertionError('docker used')), \
+                mock.patch.object(proxy_cli, 'run_remote', side_effect=AssertionError('ssh used')):
+            self.run_cli('on')
+            self.run_cli('status')
+            self.run_cli('off')
 
 
 class ProxyUpdateCheckTests(unittest.TestCase):

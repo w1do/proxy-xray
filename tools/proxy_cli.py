@@ -8,6 +8,7 @@
 """
 import argparse
 import os
+import secrets
 from pathlib import Path
 import re
 import subprocess
@@ -123,6 +124,108 @@ def server_update(args):
     return update(args, run_remote, selected)
 
 
+# ---- терминал: блок proxy в файле оболочки (только на хосте, без docker и ssh) ---------------
+
+ENV_BEGIN = '# >>> mihomo-proxy-kit >>>'
+ENV_END = '# <<< mihomo-proxy-kit <<<'
+DEFAULT_PROXY_PORT = 7890
+
+
+def env_block(port):
+    return [
+        ENV_BEGIN + '\n',
+        f'export http_proxy=http://127.0.0.1:{port}\n',
+        f'export https_proxy=http://127.0.0.1:{port}\n',
+        f'export all_proxy=socks5://127.0.0.1:{port}\n',
+        'export no_proxy=localhost,127.0.0.1,::1\n',
+        ENV_END + '\n',
+    ]
+
+
+def rc_path(shell=None):
+    """~/.zshrc for zsh, otherwise ~/.bashrc. `shell` overrides $SHELL."""
+    name = shell or ('zsh' if os.environ.get('SHELL', '').endswith('zsh') else 'bash')
+    if name not in ('bash', 'zsh'):
+        raise RuntimeError('Оболочка должна быть bash или zsh')
+    return Path.home() / ('.zshrc' if name == 'zsh' else '.bashrc')
+
+
+def find_block(lines):
+    """(start, end) indexes of the marked block, inclusive, or None."""
+    starts = [i for i, line in enumerate(lines) if line.rstrip('\r\n') == ENV_BEGIN]
+    if not starts:
+        return None
+    start = starts[0]
+    for i in range(start + 1, len(lines)):
+        if lines[i].rstrip('\r\n') == ENV_END:
+            return start, i
+    raise RuntimeError('В файле есть начало блока proxy без конца; исправьте файл вручную')
+
+
+def read_lines(path):
+    """Lines with their line endings kept (bytes are decoded, never newline-translated)."""
+    if not path.exists():
+        return []
+    return path.read_bytes().decode('utf-8').splitlines(keepends=True)
+
+
+def write_atomic(path, lines):
+    """Write through a temp file in the same directory, keep the mode, then os.replace. Symlinks are refused."""
+    if os.path.islink(path):
+        raise RuntimeError(f'{path} — символическая ссылка; реальный файл: {os.path.realpath(path)}. Файл не изменён.')
+    mode = path.stat().st_mode & 0o7777 if path.exists() else 0o644
+    tmp = path.with_name(f'.{path.name}.tmp-{secrets.token_hex(4)}')
+    tmp.write_bytes(''.join(lines).encode('utf-8'))
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def env_on(args):
+    if not 1 <= args.port <= 65535:
+        raise RuntimeError('Порт должен быть от 1 до 65535')
+    path = rc_path(args.shell)
+    if os.path.islink(path):
+        raise RuntimeError(f'{path} — символическая ссылка; реальный файл: {os.path.realpath(path)}. Файл не изменён.')
+    lines = read_lines(path)
+    block = env_block(args.port)
+    found = find_block(lines)
+    if found:
+        start, end = found
+        new = lines[:start] + block + lines[end + 1:]
+        action = 'Блок обновлён'
+    else:
+        if lines and not lines[-1].endswith('\n'):
+            lines[-1] += '\n'
+        new = lines + block
+        action = 'Блок добавлен'
+    write_atomic(path, new)
+    print(f'{action}: {path} (порт {args.port}).')
+    print(f'Чтобы применить в текущем окне: source {path}   (или откройте новое окно терминала)')
+    return 0
+
+
+def env_off(args):
+    path = rc_path(args.shell)
+    if os.path.islink(path):
+        raise RuntimeError(f'{path} — символическая ссылка; реальный файл: {os.path.realpath(path)}. Файл не изменён.')
+    lines = read_lines(path)
+    found = find_block(lines)
+    if not found:
+        print(f'Блока proxy в {path} нет. Ничего не изменено.')
+        return 0
+    start, end = found
+    write_atomic(path, lines[:start] + lines[end + 1:])
+    print(f'Блок proxy удалён из {path}. Откройте новое окно терминала.')
+    return 0
+
+
+def env_status(args):
+    path = rc_path(args.shell)
+    present = find_block(read_lines(path)) is not None
+    print(f'{path}: блок proxy {"есть" if present else "нет"}.')
+    return 0
+
+
 # ---- разбор аргументов -----------------------------------------------------------------------
 
 def build_parser():
@@ -138,6 +241,19 @@ def build_parser():
     p_logs.set_defaults(func=client_logs)
 
     sub.add_parser('check', help='проверить входы NL из контейнера (kit check)').set_defaults(func=client_check)
+
+    p_env = sub.add_parser('env', help='прокси в терминале: блок в ~/.bashrc или ~/.zshrc (только на этом компьютере)')
+    env_sub = p_env.add_subparsers(dest='env_command', required=True)
+    for name, func, text in (('on', env_on, 'добавить или обновить блок proxy'),
+                             ('off', env_off, 'удалить блок proxy'),
+                             ('status', env_status, 'показать, есть ли блок')):
+        p_action = env_sub.add_parser(name, help=text)
+        p_action.add_argument('--shell', choices=['bash', 'zsh'], default=None,
+                              help='файл оболочки (по умолчанию по $SHELL)')
+        if name == 'on':
+            p_action.add_argument('--port', type=int, default=DEFAULT_PROXY_PORT,
+                                  help=f'порт прокси (по умолчанию {DEFAULT_PROXY_PORT})')
+        p_action.set_defaults(func=func)
 
     p_server = sub.add_parser('server', help='администрирование серверов NL/USA по ssh (только для администратора)')
     srv = p_server.add_subparsers(dest='server_command', required=True)
