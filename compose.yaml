@@ -1,0 +1,55 @@
+name: mihomo-proxy-kit
+
+x-hardening: &hardening
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:mode=1777,size=64m
+  security_opt:
+    - no-new-privileges:true
+  cap_drop: [ALL]
+  logging:
+    driver: json-file
+    options: {max-size: "5m", max-file: "3"}
+
+services:
+  proxy:
+    <<: *hardening
+    image: ${KIT_IMAGE:-mihomo-proxy-kit:local}
+    pull_policy: never
+    user: "10001:10001"
+    command: ["python3", "/app/ui/kit_proxy.py"]
+    ports:
+      - "127.0.0.1:${KIT_PROXY_PORT:-7890}:7890"
+    volumes:
+      - kit-gen:/kit-gen:ro
+      - kit-state:/kit-state
+
+  kit:
+    <<: *hardening
+    image: ${KIT_IMAGE:-mihomo-proxy-kit:local}
+    build: .
+    user: "0:0"
+    cap_add: [CHOWN, SETUID, SETGID, DAC_READ_SEARCH]
+    command: ["python3", "/app/ui/server.py"]
+    environment:
+      KIT_PUBLIC_PORT: "${KIT_UI_PORT:-4050}"
+      KIT_PROXY_URL: "http://proxy:7890"
+    ports:
+      - "127.0.0.1:${KIT_UI_PORT:-4050}:4050"
+    volumes:
+      - kit-data:/data
+      - kit-gen:/kit-gen
+      - kit-state:/kit-state:ro
+      - type: bind
+        source: ${KIT_SSH_KEY:-./docker/no-key}
+        target: /run/secrets/nl_ssh_key
+        read_only: true
+        bind:
+          create_host_path: false
+
+volumes:
+  kit-data: {}
+  kit-gen: {}
+  kit-state: {}

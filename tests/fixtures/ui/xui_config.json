@@ -1,0 +1,66 @@
+{
+  "outbounds": [
+    {"tag": "usa2", "protocol": "vless", "settings": {"vnext": [{"address": "149.28.240.154", "port": 2087, "users": []}]}},
+    {"tag": "usa1", "protocol": "vless", "settings": {"vnext": [{"address": "108.61.222.91", "port": 2083, "users": []}]}},
+    {"tag": "nl-192", "protocol": "vless", "settings": {"vnext": [{"address": "192.0.2.10", "port": 443, "users": []}]}}
+  ],
+  "routing": {
+    "rules": [
+      {"type": "field", "inboundTag": ["inbound-443"], "outboundTag": "nl-192"},
+      {"type": "field", "inboundTag": ["inbound-2083"], "outboundTag": "usa1"},
+      {"type": "field", "inboundTag": ["inbound-2087"], "outboundTag": "usa2"},
+      {"type": "field", "inboundTag": ["inbound-2088"], "outboundTag": "usa2"},
+      {"type": "field", "inboundTag": ["inbound-2089"], "outboundTag": "usa2"}
+    ]
+  },
+  "inbounds": [
+    {
+      "tag": "inbound-443", "port": 443, "protocol": "vless",
+      "settings": {"clients": [{"id": "00000000-0000-4000-8000-000000000005", "email": "nl-443"}]},
+      "streamSettings": {
+        "network": "tcp", "security": "reality",
+        "realitySettings": {"privateKey": "TESTPRIV443", "serverNames": ["dl.google.com"], "shortIds": ["abcd"]}
+      }
+    },
+    {
+      "tag": "inbound-2083", "port": 2083, "protocol": "vless",
+      "settings": {"clients": [{"id": "00000000-0000-4000-8000-000000000004", "email": "usa1-xhttp"}]},
+      "streamSettings": {
+        "network": "xhttp", "security": "reality",
+        "xhttpSettings": {"path": "/dl", "mode": "auto"},
+        "realitySettings": {"privateKey": "TESTPRIV2083", "serverNames": ["dl.google.com"], "shortIds": ["abcd"]}
+      }
+    },
+    {
+      "tag": "inbound-2087", "port": 2087, "protocol": "vless",
+      "settings": {"clients": [{"id": "00000000-0000-4000-8000-000000000001", "email": "usa2-xhttp"}]},
+      "streamSettings": {
+        "network": "xhttp", "security": "reality",
+        "xhttpSettings": {"path": "/dl", "mode": "auto"},
+        "realitySettings": {"privateKey": "TESTPRIV2087", "serverNames": ["dl.google.com"], "shortIds": ["abcd"]}
+      }
+    },
+    {
+      "tag": "inbound-2088", "port": 2088, "protocol": "vless",
+      "settings": {"clients": [{"id": "00000000-0000-4000-8000-000000000002", "email": "usa2-tcp", "flow": "xtls-rprx-vision"}]},
+      "streamSettings": {
+        "network": "tcp", "security": "reality",
+        "realitySettings": {"privateKey": "TESTPRIV2088", "serverNames": ["dl.google.com"], "shortIds": ["abcd"]}
+      }
+    },
+    {
+      "tag": "inbound-2089", "port": 2089, "protocol": "vless",
+      "settings": {"clients": [{"id": "00000000-0000-4000-8000-000000000003", "email": "usa2-grpc"}]},
+      "streamSettings": {
+        "network": "grpc", "security": "reality",
+        "grpcSettings": {"serviceName": "grpc-test", "multiMode": true},
+        "realitySettings": {"privateKey": "TESTPRIV2089", "serverNames": ["dl.google.com"], "shortIds": ["abcd"]}
+      }
+    },
+    {
+      "tag": "inbound-8443", "port": 8443, "protocol": "vless",
+      "settings": {"clients": [{"id": "00000000-0000-4000-8000-000000000006", "email": "ws-skip"}]},
+      "streamSettings": {"network": "ws", "security": "none"}
+    }
+  ]
+}
