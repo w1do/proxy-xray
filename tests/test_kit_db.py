@@ -159,15 +159,16 @@ class ImportDbTests(unittest.TestCase):
         self.assertEqual(result['removed'], 1)
         self.assertIsNone(kit_db.get_active(self.conn)['inbound_id'])
 
-    def test_conflict_with_discovered_row_raises_and_rolls_back(self):
+    def test_import_overrides_discovered_row_with_same_port_and_uuid(self):
         kit_db.upsert_inbounds(self.conn, [{'port': 2088, 'uuid': self.U1, 'exit_ip': '149.28.240.154', 'exit_tag': 'USA2',
                                             'network': 'tcp', 'remark': 'd', 'flow': '', 'pbk': 'D' * 43, 'sid': 'ab',
                                             'sni': 'd.example.com', 'xhttp_json': '{}', 'grpc_service': '', 'grpc_multi': 0}])
-        before = [dict(r) for r in kit_db.list_inbounds(self.conn)]
-        with self.assertRaises(kit_db.ImportConflict) as ctx:
-            kit_db.replace_imported(self.conn, [imp(2089, self.U2), imp(2088, self.U1)])
-        self.assertEqual(ctx.exception.index, 2)
-        self.assertEqual([dict(r) for r in kit_db.list_inbounds(self.conn)], before)
+        discovered_id = kit_db.list_inbounds(self.conn)[0]['id']
+        result = kit_db.replace_imported(self.conn, [imp(2089, self.U2), imp(2088, self.U1)])
+        self.assertEqual(result, {'total': 2, 'removed': 0})
+        row = kit_db.get_inbound(self.conn, discovered_id)
+        self.assertEqual((row['source'], row['remark'], row['pbk']), ('import', 'r', 'A' * 43))
+        self.assertEqual(len(kit_db.list_inbounds(self.conn)), 2)
 
     def test_discovery_does_not_hide_import_rows(self):
         kit_db.replace_imported(self.conn, [imp(2089, self.U2)])

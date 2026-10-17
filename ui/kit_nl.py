@@ -13,6 +13,8 @@ def route_for(rules, tag, email):
  # Rules without outboundTag (balancer rules) are skipped.
  for x in rules:
   if not x.get('outboundTag'): continue
+  # Rules with any other condition (ip, domain, protocol, port, ...) match only some traffic, not the whole client.
+  if set(x) - {'type','outboundTag','user','inboundTag','ruleTag'}: continue
   if x.get('user') and email not in x['user']: continue
   if x.get('inboundTag') and tag not in x['inboundTag']: continue
   return x

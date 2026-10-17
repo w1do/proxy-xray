@@ -155,6 +155,18 @@ class RoutingPerClientTests(unittest.TestCase):
         got = self.parse(self.config(rules))
         self.assertEqual(got['main'], '108.61.222.91')
 
+    def test_default_3xui_rules_with_conditions_are_skipped(self):
+        rules = [{'type': 'field', 'ip': ['geoip:private'], 'outboundTag': 'blocked'},
+                 {'type': 'field', 'protocol': ['bittorrent'], 'outboundTag': 'blocked'},
+                 {'type': 'field', 'inboundTag': ['inbound-443'], 'outboundTag': 'usa2'}]
+        rows = self.rows(self.config(rules))
+        self.assertTrue(all(r['exit'] == '149.28.240.154' and r['exit_tag'] == 'usa2' for r in rows))
+
+    def test_user_rule_with_extra_condition_is_skipped(self):
+        rules = [{'type': 'field', 'user': ['main'], 'domain': ['geosite:ads'], 'outboundTag': 'blocked'},
+                 {'type': 'field', 'user': ['main'], 'ruleTag': 'r1', 'outboundTag': 'usa1'}]
+        self.assertEqual(self.parse(self.config(rules))['main'], '108.61.222.91')
+
     def rows(self, config):
         ns = {}
         exec(kit_nl.REMOTE_PARSE, ns)

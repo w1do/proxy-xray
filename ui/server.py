@@ -290,11 +290,7 @@ class Api:
         try:
             if kit_jobs.running_job(conn):
                 raise ApiError(409, 'Уже выполняется другая операция')
-            try:
-                result = kit_db.replace_imported(conn, rows)
-            except kit_db.ImportConflict as exc:
-                raise ApiError(400, 'Ссылки не импортированы',
-                               extra={'errors': [{'index': exc.index, 'error': 'такой вход уже обнаружен через NL'}]})
+            result = kit_db.replace_imported(conn, rows)
         finally:
             conn.close()
         items = [{'index': n, 'port': r['port'], 'network': r['network'], 'exit_ip': r['exit_ip'], 'remark': r['remark']}

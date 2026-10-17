@@ -60,13 +60,6 @@ ALTER TABLE inbounds ADD COLUMN nl_host TEXT NOT NULL DEFAULT '';
 MIGRATIONS = [V1_SQL, V2_SQL]
 
 
-class ImportConflict(ValueError):
-    """An imported link duplicates an inbound that discovery already stores. `index` is 1-based."""
-
-    def __init__(self, index):
-        super().__init__('такой вход уже обнаружен через NL')
-        self.index = index
-
 PUBLIC_INBOUND_KEYS = ('id', 'port', 'exit_ip', 'exit_tag', 'network', 'network_label', 'remark', 'flow',
                        'present', 'installable', 'active', 'check', 'source')
 
@@ -203,15 +196,10 @@ def upsert_inbounds(conn, rows):
 
 
 def replace_imported(conn, rows):
-    """Replace all imported rows with `rows` in one transaction (deterministic). Discovered rows are never touched;
-    a link that duplicates a discovered (port, uuid) raises ImportConflict and nothing is stored."""
+    """Replace all imported rows with `rows` in one transaction (deterministic). A link that duplicates a discovered
+    (port, uuid) takes over that row (source becomes 'import')."""
     stamp = now()
     with conn:
-        for index, row in enumerate(rows, start=1):
-            clash = conn.execute("SELECT 1 FROM inbounds WHERE port = ? AND uuid = ? AND source = 'discover'",
-                                 (row['port'], row['uuid'])).fetchone()
-            if clash:
-                raise ImportConflict(index)
         wanted = {(row['port'], row['uuid']) for row in rows}
         removed = 0
         for stale in conn.execute("SELECT id, port, uuid FROM inbounds WHERE source = 'import'").fetchall():
