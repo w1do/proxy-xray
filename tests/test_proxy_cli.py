@@ -208,6 +208,57 @@ class ProxyEnvTests(unittest.TestCase):
             self.run_cli('off')
 
 
+class HelpTextTests(unittest.TestCase):
+    def all_parsers(self):
+        """Every (name, parser) pair in the command tree, depth first."""
+        import argparse
+        found = []
+
+        def walk(parser, prefix):
+            for action in parser._actions:
+                if isinstance(action, argparse._SubParsersAction):
+                    for name, sub in action.choices.items():
+                        path = f"{prefix} {name}".strip()
+                        found.append((path, sub))
+                        walk(sub, path)
+
+        walk(proxy_cli.build_parser(), '')
+        return found
+
+    def test_every_subcommand_has_description_and_example(self):
+        parsers = self.all_parsers()
+        names = [name for name, _ in parsers]
+        for expected in ('status', 'logs', 'check', 'env', 'env on', 'env off', 'env status',
+                         'server', 'server status', 'server logs', 'server update'):
+            self.assertIn(expected, names)
+        for name, parser in parsers:
+            with self.subTest(command=name):
+                text = parser.description or ''
+                self.assertTrue(text.strip(), 'empty description')
+                self.assertTrue('Пример' in text or 'proxy ' in text, 'no example')
+
+    def test_help_lines_are_under_80_characters(self):
+        for name, parser in self.all_parsers():
+            for line in (parser.description or '').splitlines():
+                self.assertLess(len(line), 80, f'{name}: {line!r}')
+
+    def test_help_exits_zero_without_running_anything(self):
+        commands = [['--help'], ['status', '--help'], ['logs', '--help'], ['check', '--help'],
+                    ['env', '--help'], ['env', 'on', '--help'], ['env', 'off', '--help'],
+                    ['env', 'status', '--help'], ['server', '--help'], ['server', 'status', '--help'],
+                    ['server', 'logs', '--help'], ['server', 'update', '--help']]
+        for argv in commands:
+            with self.subTest(argv=argv):
+                with mock.patch.object(proxy_cli, 'run', side_effect=AssertionError('docker used')), \
+                        mock.patch.object(proxy_cli, 'run_remote', side_effect=AssertionError('ssh used')), \
+                        mock.patch.object(proxy_cli.subprocess, 'run', side_effect=AssertionError('subprocess used')), \
+                        mock.patch('builtins.print'), \
+                        mock.patch('sys.stdout', new_callable=io.StringIO):
+                    with self.assertRaises(SystemExit) as ctx:
+                        proxy_cli.main(argv)
+                self.assertEqual(ctx.exception.code, 0)
+
+
 class ProxyUpdateCheckTests(unittest.TestCase):
     def test_update_checks_through_docker_kit_check_from_repo_root(self):
         import argparse

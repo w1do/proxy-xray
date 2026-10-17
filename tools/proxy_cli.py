@@ -228,44 +228,277 @@ def env_status(args):
 
 # ---- разбор аргументов -----------------------------------------------------------------------
 
+TOP_DESCRIPTION = """\
+Команда proxy управляет прокси на вашем компьютере.
+
+Прокси — это посредник: ваши программы выходят в интернет через выбранный
+сервер. Панель в браузере и прокси работают в Docker. Поэтому клиентские
+команды ничего не ставят в систему и работают только через Docker.
+
+Команды:
+  status        проверить, работает ли прокси
+  logs          посмотреть журналы контейнеров
+  check         проверить входы на сервере NL
+  env           включить или выключить прокси в терминале
+  server        администрирование серверов (только для владельца)
+
+Примеры:
+  proxy status                  проверить, всё ли работает
+  proxy env on                  пустить терминал через прокси
+  proxy logs kit -n 100         последние 100 строк журнала панели
+  proxy check                   проверить входы NL
+
+Подробная справка по любой команде: proxy <команда> --help
+"""
+
+STATUS_HELP = """\
+Проверяет, работают ли контейнеры kit и proxy, и что говорит панель.
+
+Когда использовать: если панель или прокси не отвечают, или чтобы
+убедиться, что всё запущено после перезагрузки компьютера.
+
+Пример:
+  proxy status
+
+Что означает вывод:
+  kit running     панель запущена и открывается в браузере
+  proxy running   прокси запущен и слушает порт 7890
+  служба proxy    состояние прокси, которое сообщает панель:
+    running       прокси работает с выбранным входом
+    idle          прокси ждёт первой установки
+    failed        прокси не смог применить настройки
+    down          прокси не работает, обычно порт 7890 занят
+
+Что делать, если плохо:
+  kit не running      выполните proxy logs kit и проверьте ошибки
+  proxy down          порт 7890 занят старой установкой, см. README,
+                      раздел «Переход со старой установки»
+  нет ответа          выполните docker compose up -d в папке проекта
+"""
+
+LOGS_HELP = """\
+Показывает последние строки журналов контейнеров kit и proxy.
+
+Когда использовать: если что-то сломалось и нужно найти причину. Журнал
+kit — это работа панели. Журнал proxy — работа прокси (Xray и Mihomo).
+
+Примеры:
+  proxy logs                    журналы обоих контейнеров, по 50 строк
+  proxy logs kit -n 100         последние 100 строк панели
+  proxy logs proxy              последние строки прокси
+
+Что означает вывод:
+  Каждая строка — одно событие. Сообщения с словом error или ошибка
+  показывают, что пошло не так. Строки «Откройте» и «Ссылка для входа»
+  нужны только при первом запуске и содержат подсказку, как войти.
+
+Что делать, если плохо:
+  журнал пустой      контейнер ещё не запускался: docker compose up -d
+  нет контейнера     проверьте папку проекта и docker compose ps
+"""
+
+CHECK_HELP = """\
+Проверяет входы на сервере NL изнутри панели: каждый вход открывается
+через временный Xray, и выходной IP сравнивается с ожидаемым.
+
+Когда использовать: после установки или если прокси перестал
+пропускать трафик. Нужны запущенные контейнеры.
+
+Пример:
+  proxy check
+
+Что означает вывод:
+  NL:2088 (tcp) -> <IP> : OK <IP>    вход работает, IP выхода совпал
+  ... : ОШИБКА ...                   вход не работает, причина в конце строки
+  Проверено: N, ошибок: M            итог: M должно быть 0
+
+Что делать, если плохо:
+  ОШИБКА Проверка не прошла    проверьте ключ и доступ к NL в панели
+  Выход не совпал              вход ведёт не на тот сервер: проверьте вход
+  Не заданы настройки NL       в панели укажите сервер NL
+  нет контейнера kit           docker compose up -d в папке проекта
+"""
+
+ENV_HELP = """\
+Прокси в терминале: добавляет или удаляет блок в файле оболочки.
+Работает только на этом компьютере. Docker и ssh не используются.
+
+Команды: on, off, status. Файл выбирается по вашей оболочке:
+~/.zshrc для zsh, ~/.bashrc для остальных.
+
+Пример:
+  proxy env on
+"""
+
+ENV_ON_HELP = """\
+Добавляет в файл оболочки блок с адресом прокси. Если блок уже есть,
+он заменяется на месте, второй блок не добавляется.
+
+Когда использовать: один раз, после установки, чтобы команды в
+терминале (curl, git, pip) шли через прокси.
+
+Примеры:
+  proxy env on                  порт 7890 (по умолчанию)
+  proxy env on --port 7891      другой порт
+  proxy env on --shell zsh      записать в ~/.zshrc
+
+После команды выполните source ~/.bashrc (или ~/.zshrc), либо откройте
+новое окно терминала.
+
+Что делать, если плохо:
+  файл — символическая ссылка  команда не работает с ссылками, укажите
+                               настоящий файл, путь напечатан в ошибке
+  порт вне диапазона           порт от 1 до 65535
+"""
+
+ENV_OFF_HELP = """\
+Удаляет блок прокси из файла оболочки. Строки вне блока не меняются.
+Если блока нет, ничего не меняется.
+
+Когда использовать: если прокси в терминале больше не нужен.
+
+Пример:
+  proxy env off
+
+После команды откройте новое окно терминала.
+
+Что делать, если плохо:
+  блок не удаляется   проверьте, что файл не ссылка и что строки блока
+                      не изменены вручную; строки блока начинаются с
+                      «# >>> mihomo-proxy-kit >>>»
+"""
+
+ENV_STATUS_HELP = """\
+Показывает, есть ли в файле оболочки блок прокси.
+
+Когда использовать: чтобы проверить, включён ли прокси в терминале.
+
+Пример:
+  proxy env status
+
+Что означает вывод:
+  блок proxy есть    терминал будет пользоваться прокси в новых окнах
+  блок proxy нет     прокси в терминале не включён: proxy env on
+"""
+
+SERVER_HELP = """\
+Администрирование серверов NL, USA1 и USA2 по ssh. Адреса берутся из
+файла proxy.env. Клиенту эти команды не нужны.
+
+Команды: status, logs, update. Каждая работает по ssh с сервером.
+
+Пример:
+  proxy server status
+"""
+
+SERVER_STATUS_HELP = """\
+Показывает версию Xray и состояние службы на каждом сервере.
+
+Когда использовать: перед обновлением, или чтобы проверить сервер.
+
+Пример:
+  proxy server status
+
+Что означает вывод:
+  служба=active   служба работает
+  служба=inactive служба остановлена: проверьте сервер вручную
+  VERSION         версия Xray на сервере
+
+Что делать, если плохо:
+  ошибка соединения   проверьте proxy.env и доступ по ssh с этой машины
+  нет данных          сервер не ответил: попробуйте позже
+"""
+
+SERVER_LOGS_HELP = """\
+Показывает последние строки журнала службы на серверах.
+
+Когда использовать: если сервер ведёт себя странно.
+
+Примеры:
+  proxy server logs                  журналы всех серверов
+  proxy server logs usa1 -n 100      100 строк с USA1
+  proxy server logs nl usa2          журналы NL и USA2
+
+Что делать, если плохо:
+  неизвестный сервер   допустимы nl, usa1, usa2, all
+"""
+
+SERVER_UPDATE_HELP = """\
+Обновляет Xray на серверах до указанной версии, по одному серверу.
+После каждого сервера выполняется проверка. Если проверка не прошла,
+сервер откатывается, и обновление останавливается.
+
+Когда использовать: только администратору, когда выходит новая версия Xray.
+Эта команда ещё не запускалась на реальных серверах: сначала проверьте её
+на одном USA.
+
+Примеры:
+  proxy server update 26.10.10 usa1      обновить только USA1
+  proxy server update 26.10.10 --yes     обновить все без вопроса
+
+Без --yes команда спрашивает подтверждение и просит ввести yes.
+
+Что делать, если плохо:
+  версия не совпала   сервер откатился; проверьте, что версия существует
+  проверка не прошла  сервер откатился автоматически; смотрите журнал
+"""
+
+
 def build_parser():
-    parser = argparse.ArgumentParser(prog='proxy', description='Прокси-клиент в Docker и администрирование серверов')
-    sub = parser.add_subparsers(dest='command', required=True)
+    fmt = argparse.RawDescriptionHelpFormatter
+    parser = argparse.ArgumentParser(
+        prog='proxy', description=TOP_DESCRIPTION, formatter_class=fmt)
+    sub = parser.add_subparsers(dest='command', required=True, metavar='команда')
 
-    sub.add_parser('status', help='состояние контейнеров kit и proxy и состояние клиента').set_defaults(func=client_status)
+    sub.add_parser('status', help='проверить, работает ли прокси',
+                   description=STATUS_HELP,
+                   formatter_class=fmt).set_defaults(func=client_status)
 
-    p_logs = sub.add_parser('logs', help='журналы контейнеров')
+    p_logs = sub.add_parser('logs', help='посмотреть журналы контейнеров',
+                            description=LOGS_HELP, formatter_class=fmt)
     p_logs.add_argument('service', nargs='?', default='all', choices=SERVICES + ['all'],
-                        help='kit, proxy или all (по умолчанию all)')
-    p_logs.add_argument('-n', '--lines', type=int, default=50, help='сколько последних строк')
+                        help='kit (панель), proxy (прокси) или all (оба); по умолчанию all')
+    p_logs.add_argument('-n', '--lines', type=int, default=50,
+                        help='сколько последних строк показать; по умолчанию 50')
     p_logs.set_defaults(func=client_logs)
 
-    sub.add_parser('check', help='проверить входы NL из контейнера (kit check)').set_defaults(func=client_check)
+    sub.add_parser('check', help='проверить входы на сервере NL',
+                   description=CHECK_HELP, formatter_class=fmt).set_defaults(func=client_check)
 
-    p_env = sub.add_parser('env', help='прокси в терминале: блок в ~/.bashrc или ~/.zshrc (только на этом компьютере)')
-    env_sub = p_env.add_subparsers(dest='env_command', required=True)
-    for name, func, text in (('on', env_on, 'добавить или обновить блок proxy'),
-                             ('off', env_off, 'удалить блок proxy'),
-                             ('status', env_status, 'показать, есть ли блок')):
-        p_action = env_sub.add_parser(name, help=text)
+    p_env = sub.add_parser('env', help='прокси в терминале: включить, выключить, проверить',
+                           description=ENV_HELP, formatter_class=fmt)
+    env_sub = p_env.add_subparsers(dest='env_command', required=True, metavar='действие')
+    for name, func, text, body in (('on', env_on, 'включить прокси в терминале', ENV_ON_HELP),
+                                   ('off', env_off, 'выключить прокси в терминале', ENV_OFF_HELP),
+                                   ('status', env_status, 'проверить, включён ли прокси', ENV_STATUS_HELP)):
+        p_action = env_sub.add_parser(name, help=text, description=body, formatter_class=fmt)
         p_action.add_argument('--shell', choices=['bash', 'zsh'], default=None,
-                              help='файл оболочки (по умолчанию по $SHELL)')
+                              help='файл оболочки: bash (~/.bashrc) или zsh (~/.zshrc); '
+                                   'по умолчанию определяется сама')
         if name == 'on':
             p_action.add_argument('--port', type=int, default=DEFAULT_PROXY_PORT,
-                                  help=f'порт прокси (по умолчанию {DEFAULT_PROXY_PORT})')
+                                  help=f'порт прокси; по умолчанию {DEFAULT_PROXY_PORT}')
         p_action.set_defaults(func=func)
 
-    p_server = sub.add_parser('server', help='администрирование серверов NL/USA по ssh (только для администратора)')
-    srv = p_server.add_subparsers(dest='server_command', required=True)
-    srv.add_parser('status', help='версия Xray и служба на серверах').set_defaults(func=server_status)
-    p_slogs = srv.add_parser('logs', help='журналы служб на серверах')
-    p_slogs.add_argument('servers', nargs='*', default=['all'], help='nl usa1 usa2 или all')
-    p_slogs.add_argument('-n', '--lines', type=int, default=50)
+    p_server = sub.add_parser('server', help='администрирование серверов (только владелец)',
+                              description=SERVER_HELP, formatter_class=fmt)
+    srv = p_server.add_subparsers(dest='server_command', required=True, metavar='действие')
+    srv.add_parser('status', help='версия Xray и служба на серверах',
+                   description=SERVER_STATUS_HELP, formatter_class=fmt).set_defaults(func=server_status)
+    p_slogs = srv.add_parser('logs', help='журналы служб на серверах',
+                             description=SERVER_LOGS_HELP, formatter_class=fmt)
+    p_slogs.add_argument('servers', nargs='*', default=['all'],
+                         help='nl, usa1, usa2 или all; по умолчанию all')
+    p_slogs.add_argument('-n', '--lines', type=int, default=50,
+                         help='сколько последних строк; по умолчанию 50')
     p_slogs.set_defaults(func=server_logs)
-    p_update = srv.add_parser('update', help='обновить Xray на серверах до указанной версии')
-    p_update.add_argument('version', help='например 26.10.10')
-    p_update.add_argument('servers', nargs='*', default=['all'], help='nl usa1 usa2 или all')
-    p_update.add_argument('--yes', action='store_true', help='не спрашивать подтверждение')
+    p_update = srv.add_parser('update', help='обновить Xray на серверах',
+                              description=SERVER_UPDATE_HELP, formatter_class=fmt)
+    p_update.add_argument('version', help='версия Xray, например 26.10.10')
+    p_update.add_argument('servers', nargs='*', default=['all'],
+                          help='nl, usa1, usa2 или all; по умолчанию all')
+    p_update.add_argument('--yes', action='store_true',
+                          help='не спрашивать подтверждение')
     p_update.set_defaults(func=server_update)
     return parser
 
