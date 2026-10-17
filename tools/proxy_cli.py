@@ -8,10 +8,11 @@
 """
 import argparse
 import os
-import secrets
-from pathlib import Path
 import re
+import secrets
 import subprocess
+import sys
+from pathlib import Path
 
 ROOT = Path(os.environ['KIT_ROOT'])
 SSH = ['ssh', '-F', '/dev/null', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=12',
@@ -444,34 +445,105 @@ SERVER_UPDATE_HELP = """\
 """
 
 
+# Текст сообщений argparse по-русски. argparse берёт каждую строку через функцию `_`
+# (внутри модуля). Здесь эта функция заменяется таблицей; нет перевода — остаётся английский оригинал.
+RU_MESSAGES = {
+    'usage: ': 'использование: ',
+    'positional arguments': 'аргументы',
+    'options': 'опции',
+    'show this help message and exit': 'показать эту справку и выйти',
+    'unrecognized arguments: %s': 'не распознаны аргументы: %s',
+    'the following arguments are required: %s': 'не указаны обязательные аргументы: %s',
+    'one of the arguments %s is required': 'нужен один из аргументов: %s',
+    'invalid choice: %(value)r (choose from %(choices)s)':
+        'неверный выбор: %(value)r (выберите из: %(choices)s)',
+    'invalid %(type)s value: %(value)r': 'неверное значение (%(type)s): %(value)r',
+    'expected one argument': 'нужен один аргумент',
+    'expected at most one argument': 'нужно не больше одного аргумента',
+    'expected at least one argument': 'нужен хотя бы один аргумент',
+    'argument %(argument_name)s: %(message)s': 'аргумент %(argument_name)s: %(message)s',
+    '%(prog)s: error: %(message)s\n': '%(prog)s: ошибка: %(message)s\n',
+    'not allowed with argument %s': 'нельзя вместе с аргументом %s',
+    'unexpected option string: %s': 'неизвестная опция: %s',
+    'ambiguous option: %(option)s could match %(matches)s':
+        'неоднозначная опция: %(option)s может быть: %(matches)s',
+    ' (default: %(default)s)': ' (по умолчанию: %(default)s)',
+}
+
+
+def _ru(message):
+    return RU_MESSAGES.get(message, message)
+
+
+argparse._ = _ru
+
+CONTACT_LINKS = [
+    ('Сайт', 'https://w1do.ru'),
+    ('Telegram', 'https://t.me/W1DO_DIGITAL'),
+    ('YouTube', 'https://www.youtube.com/@w1do_digital'),
+]
+
+
+def links_enabled():
+    """Clickable links only in a terminal that does not ask for plain output (NO_COLOR)."""
+    return sys.stdout.isatty() and 'NO_COLOR' not in os.environ
+
+
+def hyperlink(url, label):
+    """OSC 8 hyperlink: the label is clickable in terminals that support it, plain text otherwise."""
+    if not links_enabled():
+        return label
+    return f'\x1b]8;;{url}\x1b\\{label}\x1b]8;;\x1b\\'
+
+
+def contacts():
+    lines = ['Контакты автора:']
+    for name, url in CONTACT_LINKS:
+        lines.append(f'  {name}: {hyperlink(url, url)}')
+    return '\n'.join(lines) + '\n'
+
+
+def _help_flag(parser):
+    parser.add_argument('-h', '--help', action='help', help='показать эту справку и выйти')
+    parser._positionals.title = 'аргументы'
+    parser._optionals.title = 'опции'
+    return parser
+
+
+def make_parser(epilog=None, **kwargs):
+    kwargs.setdefault('formatter_class', argparse.RawDescriptionHelpFormatter)
+    return _help_flag(argparse.ArgumentParser(add_help=False, epilog=epilog, **kwargs))
+
+
+def sub_parser(container, name, **kwargs):
+    kwargs.setdefault('formatter_class', argparse.RawDescriptionHelpFormatter)
+    return _help_flag(container.add_parser(name, add_help=False, **kwargs))
+
+
 def build_parser():
-    fmt = argparse.RawDescriptionHelpFormatter
-    parser = argparse.ArgumentParser(
-        prog='proxy', description=TOP_DESCRIPTION, formatter_class=fmt)
+    parser = make_parser(prog='proxy', description=TOP_DESCRIPTION, epilog=contacts())
     sub = parser.add_subparsers(dest='command', required=True, metavar='команда')
 
-    sub.add_parser('status', help='проверить, работает ли прокси',
-                   description=STATUS_HELP,
-                   formatter_class=fmt).set_defaults(func=client_status)
+    sub_parser(sub, 'status', help='проверить, работает ли прокси',
+               description=STATUS_HELP).set_defaults(func=client_status)
 
-    p_logs = sub.add_parser('logs', help='посмотреть журналы контейнеров',
-                            description=LOGS_HELP, formatter_class=fmt)
+    p_logs = sub_parser(sub, 'logs', help='посмотреть журналы контейнеров', description=LOGS_HELP)
     p_logs.add_argument('service', nargs='?', default='all', choices=SERVICES + ['all'],
                         help='kit (панель), proxy (прокси) или all (оба); по умолчанию all')
     p_logs.add_argument('-n', '--lines', type=int, default=50,
                         help='сколько последних строк показать; по умолчанию 50')
     p_logs.set_defaults(func=client_logs)
 
-    sub.add_parser('check', help='проверить входы на сервере NL',
-                   description=CHECK_HELP, formatter_class=fmt).set_defaults(func=client_check)
+    sub_parser(sub, 'check', help='проверить входы на сервере NL',
+               description=CHECK_HELP).set_defaults(func=client_check)
 
-    p_env = sub.add_parser('env', help='прокси в терминале: включить, выключить, проверить',
-                           description=ENV_HELP, formatter_class=fmt)
+    p_env = sub_parser(sub, 'env', help='прокси в терминале: включить, выключить, проверить',
+                       description=ENV_HELP)
     env_sub = p_env.add_subparsers(dest='env_command', required=True, metavar='действие')
     for name, func, text, body in (('on', env_on, 'включить прокси в терминале', ENV_ON_HELP),
                                    ('off', env_off, 'выключить прокси в терминале', ENV_OFF_HELP),
                                    ('status', env_status, 'проверить, включён ли прокси', ENV_STATUS_HELP)):
-        p_action = env_sub.add_parser(name, help=text, description=body, formatter_class=fmt)
+        p_action = sub_parser(env_sub, name, help=text, description=body)
         p_action.add_argument('--shell', choices=['bash', 'zsh'], default=None,
                               help='файл оболочки: bash (~/.bashrc) или zsh (~/.zshrc); '
                                    'по умолчанию определяется сама')
@@ -480,25 +552,22 @@ def build_parser():
                                   help=f'порт прокси; по умолчанию {DEFAULT_PROXY_PORT}')
         p_action.set_defaults(func=func)
 
-    p_server = sub.add_parser('server', help='администрирование серверов (только владелец)',
-                              description=SERVER_HELP, formatter_class=fmt)
+    p_server = sub_parser(sub, 'server', help='администрирование серверов (только владелец)',
+                          description=SERVER_HELP)
     srv = p_server.add_subparsers(dest='server_command', required=True, metavar='действие')
-    srv.add_parser('status', help='версия Xray и служба на серверах',
-                   description=SERVER_STATUS_HELP, formatter_class=fmt).set_defaults(func=server_status)
-    p_slogs = srv.add_parser('logs', help='журналы служб на серверах',
-                             description=SERVER_LOGS_HELP, formatter_class=fmt)
+    sub_parser(srv, 'status', help='версия Xray и служба на серверах',
+               description=SERVER_STATUS_HELP).set_defaults(func=server_status)
+    p_slogs = sub_parser(srv, 'logs', help='журналы служб на серверах', description=SERVER_LOGS_HELP)
     p_slogs.add_argument('servers', nargs='*', default=['all'],
                          help='nl, usa1, usa2 или all; по умолчанию all')
     p_slogs.add_argument('-n', '--lines', type=int, default=50,
                          help='сколько последних строк; по умолчанию 50')
     p_slogs.set_defaults(func=server_logs)
-    p_update = srv.add_parser('update', help='обновить Xray на серверах',
-                              description=SERVER_UPDATE_HELP, formatter_class=fmt)
+    p_update = sub_parser(srv, 'update', help='обновить Xray на серверах', description=SERVER_UPDATE_HELP)
     p_update.add_argument('version', help='версия Xray, например 26.10.10')
     p_update.add_argument('servers', nargs='*', default=['all'],
                           help='nl, usa1, usa2 или all; по умолчанию all')
-    p_update.add_argument('--yes', action='store_true',
-                          help='не спрашивать подтверждение')
+    p_update.add_argument('--yes', action='store_true', help='не спрашивать подтверждение')
     p_update.set_defaults(func=server_update)
     return parser
 

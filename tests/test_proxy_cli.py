@@ -1,4 +1,4 @@
-import contextlib, importlib, io, os, stat, sys, tempfile, unittest
+import contextlib, importlib, io, os, re, stat, sys, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -257,6 +257,77 @@ class HelpTextTests(unittest.TestCase):
                     with self.assertRaises(SystemExit) as ctx:
                         proxy_cli.main(argv)
                 self.assertEqual(ctx.exception.code, 0)
+
+
+class HelpLocalizationTests(unittest.TestCase):
+    URLS = ['https://w1do.ru', 'https://t.me/W1DO_DIGITAL', 'https://www.youtube.com/@w1do_digital']
+    ENGLISH = ['usage:', 'options:', 'positional arguments', 'show this help', 'subcommands:']
+
+    class FakeTTY(io.StringIO):
+        def __init__(self, tty):
+            super().__init__()
+            self._tty = tty
+
+        def isatty(self):
+            return self._tty
+
+    def help_texts(self):
+        texts = {'': proxy_cli.build_parser().format_help()}
+        for name, parser in HelpTextTests().all_parsers():
+            texts[name] = parser.format_help()
+        return texts
+
+    def test_help_has_no_english_labels(self):
+        with mock.patch('sys.stdout', self.FakeTTY(False)):
+            for name, text in self.help_texts().items():
+                with self.subTest(command=name or 'proxy'):
+                    for word in self.ENGLISH:
+                        self.assertNotIn(word, text)
+                    self.assertIn('использование:', text)
+                    self.assertIn('показать эту справку и выйти', text)
+
+    def test_contacts_only_in_top_help(self):
+        with mock.patch('sys.stdout', self.FakeTTY(False)):
+            texts = self.help_texts()
+        for url in self.URLS:
+            self.assertEqual(texts[''].count(url), 1)
+        for name, text in texts.items():
+            if name:
+                self.assertNotIn('https://', text, name)
+
+    def test_plain_urls_and_no_escape_bytes_when_not_a_tty(self):
+        with mock.patch('sys.stdout', self.FakeTTY(False)):
+            text = proxy_cli.build_parser().format_help()
+        for url in self.URLS:
+            self.assertIn(url, text)
+        self.assertNotIn('\x1b', text)
+
+    def test_tty_wraps_each_url_in_osc8_and_keeps_visible_text(self):
+        import re
+        with mock.patch('sys.stdout', self.FakeTTY(True)), mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('NO_COLOR', None)
+            text = proxy_cli.build_parser().format_help()
+        for url in self.URLS:
+            self.assertIn(f'\x1b]8;;{url}\x1b\\{url}\x1b]8;;\x1b\\', text)
+        visible = re.sub(r'\x1b\]8;;[^\x1b]*\x1b\\', '', text)
+        for url in self.URLS:
+            self.assertIn(url, visible)
+
+    def test_no_color_disables_hyperlinks_on_a_tty(self):
+        with mock.patch('sys.stdout', self.FakeTTY(True)), mock.patch.dict(os.environ, {'NO_COLOR': '1'}):
+            text = proxy_cli.build_parser().format_help()
+        self.assertNotIn('\x1b', text)
+        for url in self.URLS:
+            self.assertIn(url, text)
+
+    def test_argparse_errors_are_in_russian(self):
+        err = io.StringIO()
+        with mock.patch('sys.stderr', err), self.assertRaises(SystemExit) as ctx:
+            proxy_cli.build_parser().parse_args(['logs', 'nl'])
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertIn('неверный выбор', err.getvalue())
+        self.assertIn('ошибка:', err.getvalue())
+        self.assertNotIn('invalid choice', err.getvalue())
 
 
 class ProxyUpdateCheckTests(unittest.TestCase):
